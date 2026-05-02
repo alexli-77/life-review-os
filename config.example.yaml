@@ -31,6 +31,14 @@ documents:
     - year: 2023
       token: YOUR_2023_WEEKLY_TOKEN
 
+# ── 本地知识库（可选） ─────────────────────────────────────
+# 启用后，weekly review 会扫描 watch-list.md 中到期的 watching/considering 事项，
+# 在生成下周计划前提示决策。配套使用 Leon-knowledgeBase-template。
+vault:
+  enabled: false                              # 改成 true 以启用
+  path: /path/to/your/Private-Vault           # 你的 Obsidian Private-Vault 绝对路径
+  watch_list: 99_Meta/watch-list.md           # 相对于 vault.path
+
 # ── 模式规则 ──────────────────────────────────────────────
 modes:
   weekly:

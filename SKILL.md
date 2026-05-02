@@ -37,13 +37,14 @@ keywords:
 
 每次执行前，**按顺序**读取以下文件：
 
-1. `config.yaml` — 获取用户信息、飞书 token、框架选择、模式规则
+1. `config.yaml` — 获取用户信息、飞书 token、框架选择、模式规则、vault 配置
 2. `engine/01-read.md` — 读取飞书文档的方法
 3. `engine/02-analyze.md` — 分析逻辑
 4. `engine/03-plan.md` — 生成下周计划
 5. `engine/04-write.md` — 写回飞书（仅 auto_write=true 时执行）
-6. `frameworks/{framework}.md` — 对应的分析框架（从 config.yaml 读取 framework 字段）
-7. `modes/{mode}.md` — 对应模式的具体行为规则
+6. `engine/05-watch-list.md` — 扫描本地知识库 watch-list（仅 vault.enabled=true 时执行）
+7. `frameworks/{framework}.md` — 对应的分析框架（从 config.yaml 读取 framework 字段）
+8. `modes/{mode}.md` — 对应模式的具体行为规则
 
 ## 标准执行流程
 
@@ -64,6 +65,14 @@ Step 3: 分析（按 engine/02-analyze.md + frameworks/{framework}.md）
         → 对比计划 vs 执行
         → 识别完成项 / 未完成项 / 偏移点
         → 结合用户 retro 和感受校正结论
+        ↓
+Step 3.5: 扫描 Watch List（按 engine/05-watch-list.md）
+        → 仅当 vault.enabled = true 时执行
+        → 读取 99_Meta/watch-list.md
+        → 抓出 next-review <= 今天 的事项
+        → 逐项问用户：触发 / 推迟 / 放弃
+        → 决策落地：修改笔记 frontmatter + watch-list 栏目
+        → 被激活（status → active）的事项作为下周计划候选
         ↓
 Step 4: 生成下周计划（按 engine/03-plan.md）
         → 每个 OKR 下的具体要务
