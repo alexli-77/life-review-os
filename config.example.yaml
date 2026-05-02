@@ -1,0 +1,43 @@
+# Life Review OS — 个人配置模板
+# 复制此文件为 config.yaml，填入你的信息，config.yaml 已被 .gitignore 忽略
+
+# ── 个人信息 ──────────────────────────────────────────────
+user:
+  name: 你的名字               # 显示在分析报告中
+  symbol: 🐧                  # 飞书文档中标识你的 emoji，用于过滤你的行
+  timezone: America/Toronto   # 你的时区（如 Asia/Shanghai）
+
+# ── 分析框架 ──────────────────────────────────────────────
+# 对应 frameworks/ 目录下的文件名（不含 .md）
+framework: stephen-covey      # 可选：stephen-covey | okr-pure
+
+# ── 飞书文档 ──────────────────────────────────────────────
+documents:
+  # 使命宣言文档 token（旧版 doc 格式）
+  mission_statement: YOUR_MISSION_DOC_TOKEN
+
+  # 五年计划文档 token（旧版 doc 格式）
+  five_year_plan: YOUR_FIVE_YEAR_PLAN_TOKEN
+
+  # Weekly 文档列表（从最新年份开始排列）
+  weekly:
+    - year: 2026
+      token: YOUR_2026_WEEKLY_TOKEN
+      table_block_id: YOUR_2026_TABLE_BLOCK_ID  # Q2/当前季度表格的 block_id，用于写回计划
+    - year: 2025
+      token: YOUR_2025_WEEKLY_TOKEN
+    - year: 2024
+      token: YOUR_2024_WEEKLY_TOKEN
+    - year: 2023
+      token: YOUR_2023_WEEKLY_TOKEN
+
+# ── 模式规则 ──────────────────────────────────────────────
+modes:
+  weekly:
+    lookback_weeks: 2          # 读取最近几周的执行数据
+    auto_write: true           # 分析后自动写回飞书
+  biweekly:
+    lookback_weeks: 4
+    auto_write: true
+  quarterly:
+    auto_write: false          # 季末报告先在对话中确认，再写回
