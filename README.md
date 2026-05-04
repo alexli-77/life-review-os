@@ -182,6 +182,19 @@ life-review-os/
 
 ---
 
+## Contributing
+
+欢迎 bug 修复、文档改进、新增分析框架等贡献。
+
+提 PR 前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，里面写明了：
+- 哪些 PR 直接提，哪些建议先开 issue 讨论
+- Fork + branch + PR 完整流程
+- Commit message 风格和敏感信息约束
+
+> 这是个人项目，PR 响应可能 1-2 周。如果你的改动有时效性需求，建议先开 issue。
+
+---
+
 ## License
 
 MIT — 自由使用、修改、分发。
