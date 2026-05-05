@@ -106,6 +106,47 @@ user_symbol = '🐧'  # 从 config.yaml 读取
 relevant = [line for line in lines if user_symbol in line or in_user_section]
 ```
 
+## Deadline 自然语言抽取（仅 vault.enabled = true）
+
+读完飞书文档后，对每个 P0/P1 KR 描述运行 deadline 抽取，结果传给 `engine/06-metadata.md` 的 Step 2.5.2 处理。
+
+```python
+import re
+from datetime import date
+
+def extract_deadline(kr_text: str, today: date, year: int) -> dict | None:
+    """
+    Returns: {'date': 'YYYY-MM-DD', 'confidence': 'high'|'medium'|'low', 'matched_text': '...'}
+              or None if no pattern matched.
+    """
+    patterns = [
+        # 高置信（明确日期）
+        (r'(\d{4})-(\d{2})-(\d{2})', 'high'),
+        (r'(\d{1,2})月(\d{1,2})日', 'high'),
+        (r'(\d{1,2})\.(\d{1,2})前', 'high'),
+        # 中置信（相对当周/月）
+        (r'周([一二三四五六日])前?', 'medium'),
+        (r'(本周末|下周末|月底|季度末)', 'medium'),
+        # 低置信（粗略时间）
+        (r'(下周|下个月|下季度)', 'low'),
+    ]
+    for pat, conf in patterns:
+        m = re.search(pat, kr_text)
+        if m:
+            return {'date': _resolve(m, today, year), 'confidence': conf, 'matched_text': m.group(0)}
+    return None
+```
+
+### 抽取置信度的处理
+
+| 置信度 | skill 行为 |
+|---|---|
+| `high` | 直接展示给用户确认（"我读到 6.15，对吗？"） |
+| `medium` | 展示并附原文（"我从'周四前'推测是 5.7，对吗？"） |
+| `low` | 不自动写入；进入 dialog 询问 |
+
+> 本步骤的输出被 `engine/06-metadata.md` 的 Step 2.5.3 消费。
+
 ## 错误处理
 
 | 错误 | 原因 | 处理方式 |

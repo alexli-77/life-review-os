@@ -182,6 +182,25 @@ life-review-os/
 
 ---
 
+## 可选：与 Obsidian 知识库联动
+
+life-review-os 自带的 watch-list 扫描和 OKR metadata 持久化功能依赖一个本地知识库目录（任何 markdown 笔记目录都可以——Obsidian / Logseq / 纯 md folder 均支持）。
+
+如果你还没有合适的知识库结构，推荐使用配套模板：
+
+> **Leon-knowledgeBase-template**
+> https://github.com/alexli-77/Leon-knowledgeBase-template
+>
+> Obsidian PARA 结构 + Claude Code `/record` skill 一键部署。已包含本 skill 需要的 `99_Meta/watch-list.md` 结构。
+
+启用方式：把 `config.yaml` 的 `vault.enabled` 改为 `true`，`vault.path` 指向你的笔记目录。第一次运行时 skill 会询问是否创建 `okr-metadata.yaml`（用于 deadline / status 等结构化补全）。
+
+不想用知识库的话，把 `vault.enabled` 设为 `false` 即可——核心 OKR 复盘功能完全不受影响。
+
+详见 [`references/metadata-conventions.md`](references/metadata-conventions.md)。
+
+---
+
 ## Contributing
 
 欢迎 bug 修复、文档改进、新增分析框架等贡献。

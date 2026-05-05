@@ -32,12 +32,17 @@ documents:
       token: YOUR_2023_WEEKLY_TOKEN
 
 # ── 本地知识库（可选） ─────────────────────────────────────
-# 启用后，weekly review 会扫描 watch-list.md 中到期的 watching/considering 事项，
-# 在生成下周计划前提示决策。配套使用 Leon-knowledgeBase-template。
+# 启用后开启两个增强：
+#   1. watch-list 扫描——到期的 watching/considering 事项在生成下周计划前提示决策
+#   2. OKR metadata 补全——把 deadline、phantom 状态等存到本地 yaml，让分析有数据依据
+# 任何 markdown 笔记目录都可以作为 vault。如果你还没有，参考：
+#   https://github.com/alexli-77/Leon-knowledgeBase-template
 vault:
   enabled: false                              # 改成 true 以启用
-  path: /path/to/your/Private-Vault           # 你的 Obsidian Private-Vault 绝对路径
+  path: /path/to/your/Private-Vault           # 你的笔记目录绝对路径
   watch_list: 99_Meta/watch-list.md           # 相对于 vault.path
+  okr_metadata: 99_Meta/okr-metadata.yaml     # OKR metadata 文件（缺失时 skill 会询问是否创建）
+  metadata_backup: true                       # 写入前备份 .bak 文件，用于回滚
 
 # ── 模式规则 ──────────────────────────────────────────────
 modes:
