@@ -74,9 +74,47 @@
 - 若是"救火 / 突发 / 帮人" → 累计为第一/第三象限信号，连续 2+ 周出现则触发"时间被挤占"的结构性诊断
 - 输出中 `unplanned_pattern` 字段记录类型与频次
 
-### Step 6：调用框架分析
+### Step 6：消费 OKR Metadata（仅 vault.enabled = true）
 
-将以上数据传入 `frameworks/{framework}.md` 指定的分析视角，生成结构化诊断。
+加载 `engine/06-metadata.md` 写入的 metadata 文件后，每个 KR 的对照表新增以下字段：
+
+| 字段 | 来源 | 用途 |
+|---|---|---|
+| `deadline` | metadata.{kr}.deadline | 计算 days_to_deadline |
+| `effort` | metadata.{kr}.effort | 评估"小事推不动"还是"大事拖延" |
+| `status` | metadata.{kr}.status | phantom 不计入未完成；parked 暂时不分析 |
+
+#### 派生指标
+
+```python
+days_to_deadline = (deadline - today).days  # 无 deadline 时为 None
+
+# 紧急度等级
+if status == 'phantom':
+    urgency = 'phantom'
+elif days_to_deadline is None:
+    urgency = 'no_ddl'
+elif days_to_deadline < 0:
+    urgency = 'overdue'
+elif days_to_deadline <= 7:
+    urgency = 'this_week'
+elif days_to_deadline <= 14:
+    urgency = 'next_two_weeks'
+else:
+    urgency = 'comfortable'
+```
+
+#### 新增结构性诊断
+
+| 诊断 | 触发条件 |
+|---|---|
+| `deadline_pressure` | urgency ∈ {overdue, this_week} 且进度 <50% |
+| `phantom_kr_warning` | status=phantom 且本季度第二次出现，提示用户"是否降级或移除" |
+| `hidden_q1` | urgency=this_week 但本周要务里没标 MIT |
+
+### Step 7：调用框架分析
+
+将以上数据（含 metadata 派生指标）传入 `frameworks/{framework}.md` 指定的分析视角，生成结构化诊断。
 
 ## 输出结构
 
@@ -87,7 +125,10 @@
     {
       "kr": "KR描述",
       "reason": "一句话原因",
-      "blocker_type": "external | procrastination | wrong_target | unspecified"
+      "blocker_type": "external | procrastination | wrong_target | unspecified",
+      "deadline": "YYYY-MM-DD | null",
+      "urgency": "overdue | this_week | next_two_weeks | comfortable | no_ddl | phantom",
+      "days_to_deadline": <int | null>
     },
     ...
   ],
@@ -96,6 +137,16 @@
   "unplanned_pattern": [
     {"item": "帮学弟 debug", "category": "Q3-杂事", "weeks_seen": 1}
   ],
+  "urgency_distribution": {
+    "Q1": 2,                  # P0/P1 + this_week/overdue
+    "Q2": 5,                  # P0/P1 + comfortable/no_ddl
+    "Q3": 1,                  # 无优先级 + this_week
+    "Q4": 0
+  },
+  "deadline_alerts": [
+    {"kr": "...", "deadline": "...", "urgency": "overdue", "progress": 0.3}
+  ],
+  "phantom_krs": ["O3_KR4 完成自己的 portfolio"],
   "framework_diagnosis": "框架特定的诊断内容（见 frameworks/）",
   "user_context": "retro 和感受的摘要"
 }

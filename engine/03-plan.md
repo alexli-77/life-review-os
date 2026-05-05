@@ -15,12 +15,36 @@
 
 **每周只能有 1 个 MIT**（Most Important Thing）。
 
-MIT 选择标准（按优先级）：
+MIT 选择标准（按优先级，**有 metadata 时优先用 metadata**）：
+
+#### 有 metadata（vault.enabled = true 且 metadata 存在）
+
+1. `urgency = overdue` 且 priority ∈ {P0, P1}：必须升级为 MIT，否则继续滞后
+2. `urgency = this_week` 且 priority = P0 且进度 <50%：强候选 MIT
+3. 上周 MIT 未完成且 deadline 未过：延续为本周 MIT
+4. `urgency = next_two_weeks` 且 P0：候选 MIT（有提前量）
+5. 都不满足时，按规则"P0 中进度最落后的 KR"
+
+> phantom / parked 状态的 KR **永远不进 MIT 候选**，除非用户在 dialog 里显式启用。
+
+#### 无 metadata（fallback，原有逻辑）
+
 1. 上周已标注 MIT 但未完成 → 延续为本周 MIT
 2. P0 OKR 中进度最落后的 KR → 提升为 MIT
-3. 有明确截止时间压力的 KR
+3. 有明确截止时间压力的 KR（从描述里关键词识别）
 
 若上周有 2+ 个 MIT 且完成率低，本周主动收窄为 1 个，并在输出中说明原因。
+
+### 规则 1.5：Phantom KR 自动剔除（仅有 metadata 时）
+
+`status = phantom` 的 KR 不进入下周要务建议。**第二次连续出现该状态时**，在输出末尾加一段提示：
+
+```
+🔍 **下季度建议**
+以下 KR 已连续被标记为 phantom（无 deadline 且未启动）：
+- O3_KR4: 完成自己的 portfolio（标记于 2026-05-04）
+是否在下季度规划时移除或降级？
+```
 
 ### 规则 2：按 OKR 优先级分配任务量
 

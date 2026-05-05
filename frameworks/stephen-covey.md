@@ -24,6 +24,26 @@
 
 目标：Q2 占比 ≥ 60%。Q1 长期过高 → 提示"一直在救火"。
 
+#### 数据驱动分类（有 metadata 时）
+
+当 `engine/06-metadata.md` 提供了每个 KR 的 priority + deadline，象限分类切换为数据驱动：
+
+```python
+def classify_quadrant(priority, urgency):
+    is_important = priority in ('P0', 'P1', 'P1.5')
+    is_urgent = urgency in ('overdue', 'this_week')
+    if is_important and is_urgent:    return 'Q1'
+    if is_important and not is_urgent: return 'Q2'
+    if not is_important and is_urgent: return 'Q3'
+    return 'Q4'
+```
+
+无 metadata 时退回到关键词启发式（"DDL"、"截止"、"明天"等）。
+
+数据驱动的优点：
+- 区分"看起来不紧急但其实 7 天内截止"——不再被字面意思骗
+- 区分"看起来紧急但其实 phantom"——不再误把"长期方向"当成 Q2 推进
+
 ### 3. MIT 一致性
 
 检查标注为 MIT 的任务是否真的是"这周最重要的一件事"：

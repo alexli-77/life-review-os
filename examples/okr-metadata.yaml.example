@@ -1,0 +1,64 @@
+# OKR Metadata 示例文件
+# 把这份复制到 {vault.path}/{vault.okr_metadata}（默认 99_Meta/okr-metadata.yaml）
+# 或者让 weekly-review skill 在第一次运行时自动生成
+
+# 完整字段说明见：references/metadata-conventions.md
+
+schema_version: 1
+
+# 按 <year>-<quarter> 切分。同一季度内 KR ID 稳定。
+2026-Q2:
+  # 用 config.user.symbol 作为 key，多个用户共用一份 vault 时各占一段
+  🐶:
+    O1_KR1:
+      kr_text_snapshot: "完成博士的研究方向提案，并与导师汇报实验结果"
+      priority: P0
+      deadline: 2026-06-15
+      effort: L
+      status: active
+      noted_on: 2026-05-04
+      source: dialog
+
+    O1_KR2:
+      kr_text_snapshot: "整理 AI Agent 领域的基本概念，研究方向，发展现状，职业发展可行性分析"
+      priority: P0
+      deadline: 2026-06-30
+      effort: M
+      status: active
+      noted_on: 2026-05-04
+      source: dialog
+
+    O1_KR3:
+      kr_text_snapshot: "完成 NLP 课程"
+      priority: P0
+      deadline: 2026-04-30
+      effort: M
+      status: done           # 已完成
+      noted_on: 2026-05-04
+      source: auto_extracted
+
+    O3_KR4:
+      kr_text_snapshot: "完成自己的 portfolio"
+      priority: P0
+      deadline: null          # 用户在 dialog 里说"长期方向，没截止"
+      status: phantom
+      noted_on: 2026-05-04
+      source: dialog
+
+    O5_KR2:
+      kr_text_snapshot: "持续阅读，完 1 本书"
+      priority: P0
+      deadline: 2026-06-30
+      effort: M
+      status: active
+      noted_on: 2026-05-04
+      source: dialog
+
+# 用户手动维护区，skill 不会改这块
+manual_overrides:
+  - kr: O3_KR4
+    note: "下季度再决定是否启动；当前不进要务建议"
+    until: 2026-07-01
+
+  - kr: O1_KR2
+    note: "等导师 5 月底回邮件，确认调研范围"
