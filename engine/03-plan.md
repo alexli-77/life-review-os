@@ -77,6 +77,36 @@ P1 OKR → 每个最多 1 条要务
 初期（V1）：每条要务都基于用户提供的 retro 推导，AI 不凭空生成。
 成熟期（V2+）：AI 可根据历史执行模式预判下周要务，用户只需确认或调整。
 
+### 规则 6：Phantom KR 自动剔除（仅有 metadata 时）
+
+见 `engine/02-analyze.md` 的 phantom_kr_warning 诊断。`status = phantom`
+的 KR 不进入下周要务建议；连续两次出现时在输出末尾提示用户考虑下季度移除。
+
+### 规则 7：Todos 折入"如有余力"（仅 vault.todos 已配置）
+
+来自 `engine/07-todos.md` 的 todos 数据按以下规则折入下周计划：
+
+#### 候选优先级
+
+1. `urgency = overdue` 的 todos：必须列入（用户标 [urgent] 或 DDL 已过）
+2. `urgency = this_week` 的 todos：建议列入
+3. 其他 open todos：仅在状态分数高且 KR 要务 ≤ 5 条时考虑
+
+#### 强制约束
+
+- todos 写入 `如有余力` 区块，**不抢 MIT 槽位**
+- todos 不计入 6-8 条要务总数上限（独立计数）
+- `[blocked]` / `[parked]` 的 todos 永远不主动建议
+- 单次 review 折入 todos 上限 **2 条**（避免清单膨胀）
+
+#### 强度调整（叠加规则 4）
+
+| 用户感受 | todos 折入数 |
+|---|---|
+| 精力充沛、情绪稳定 | 上限 2 条 |
+| 情绪低落、外部压力大 | 上限 1 条（仅 overdue + urgent） |
+| 极度倦怠 | 0 条（todos 全部隐藏，只显示背景统计） |
+
 ## 输出格式
 
 生成供写回飞书的结构化计划：
@@ -90,6 +120,10 @@ KR1（{OKR名称}）：
 
 KR2（{OKR名称}）：
 1. {要务}
+
+[如有余力]
+- {KR 要务 - 低优先级}
+- {todos 折入项，标 📝} ← 来自 todos.md，可选
 
 KR3（{OKR名称}）：
 1. {要务}

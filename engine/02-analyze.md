@@ -112,9 +112,35 @@ else:
 | `phantom_kr_warning` | status=phantom 且本季度第二次出现，提示用户"是否降级或移除" |
 | `hidden_q1` | urgency=this_week 但本周要务里没标 MIT |
 
-### Step 7：调用框架分析
+### Step 7：消费 Todos（仅 vault.todos 已配置）
 
-将以上数据（含 metadata 派生指标）传入 `frameworks/{framework}.md` 指定的分析视角，生成结构化诊断。
+加载 `engine/07-todos.md` 解析的 todos 数据后：
+
+- **不计入 KR 完成率**（todos 是背景，不是 OKR 推进）
+- 输出独立的 `todos_summary` 章节
+- 标记需要本周关注的 todos：urgency ∈ {overdue, this_week}
+
+#### 输出附加字段
+
+```python
+todos_summary = {
+    'open_count': int,
+    'overdue': [{'text': '...', 'deadline': '...', 'days_overdue': N}, ...],
+    'this_week': [{'text': '...', 'deadline': '...'}, ...],
+    'blocked': [{'text': '...', 'reason': '...'}, ...],
+    'recently_done': [{'text': '...', 'done_date': '...'}, ...]    # 最近 7 天
+}
+```
+
+#### 不做的事（保守）
+
+- ❌ 不做 todo 与 KR 关键词重合检测（避免误判）
+- ❌ 不修改 todos.md 文件（archive 由用户手动）
+- ❌ 不把 todos 当作要务参与 MIT 选择
+
+### Step 8：调用框架分析
+
+将以上数据（含 metadata 派生指标 + todos）传入 `frameworks/{framework}.md` 指定的分析视角，生成结构化诊断。
 
 ## 输出结构
 
@@ -147,6 +173,13 @@ else:
     {"kr": "...", "deadline": "...", "urgency": "overdue", "progress": 0.3}
   ],
   "phantom_krs": ["O3_KR4 完成自己的 portfolio"],
+  "todos_summary": {
+    "open_count": 6,
+    "overdue": [{"text": "续车保", "deadline": "2026-05-10", "days_overdue": 4}],
+    "this_week": [{"text": "买羽毛球鞋", "deadline": "2026-05-15"}],
+    "blocked": [{"text": "给老妈寄药", "reason": "等地址确认"}],
+    "recently_done": [{"text": "交报税材料", "done_date": "2026-05-03"}]
+  },
   "framework_diagnosis": "框架特定的诊断内容（见 frameworks/）",
   "user_context": "retro 和感受的摘要"
 }

@@ -1,0 +1,36 @@
+---
+用途: 小颗粒待办事项；非 OKR 推进项
+最后更新: 2026-05-04
+---
+
+# Todos
+
+> 把这份复制到 {vault.path}/{vault.todos}（默认 99_Meta/todos.md）。
+> 完整格式说明见 engine/07-todos.md。
+
+## 🔴 Open
+
+<!-- 当前需要做但还没做的小事 -->
+<!-- 标签：[DDL: YYYY-MM-DD] [urgent] [blocked: 原因] -->
+
+- [ ] 续车保 [DDL: 2026-05-10] [urgent]
+- [ ] 买羽毛球鞋 [DDL: 2026-05-15]
+- [ ] follow up Benoit Q3 funding
+- [ ] 读那篇 agentic AI patterns 文章
+- [ ] 给老妈寄药 [blocked: 等地址确认]
+- [ ] 复诊耳朵
+
+## ✅ Done (last 7 days)
+
+<!-- 最近 7 天完成的，会进入"上周完成"列表 -->
+<!-- 超过 7 天的可以删掉或保留作为参考 -->
+
+- [x] 给 TA 发邮件问 office hour [done: 2026-05-02]
+- [x] 交报税材料 [done: 2026-05-03]
+
+## 🅿️ Parked
+
+<!-- 主动延后的事，每月 review 一次 -->
+
+- [ ] 调研 Notion → Obsidian 迁移 [parked]
+- [ ] 学 Rust 异步 [parked]

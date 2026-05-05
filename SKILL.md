@@ -44,8 +44,9 @@ keywords:
 5. `engine/04-write.md` — 写回飞书（仅 auto_write=true 时执行）
 6. `engine/05-watch-list.md` — 扫描本地知识库 watch-list（仅 vault.enabled=true 时执行）
 7. `engine/06-metadata.md` — OKR metadata 补全与读取（仅 vault.enabled=true 时执行）
-8. `frameworks/{framework}.md` — 对应的分析框架（从 config.yaml 读取 framework 字段）
-9. `modes/{mode}.md` — 对应模式的具体行为规则
+8. `engine/07-todos.md` — Todos 文件读取（仅 vault.enabled=true 且 vault.todos 已配置时）
+9. `frameworks/{framework}.md` — 对应的分析框架（从 config.yaml 读取 framework 字段）
+10. `modes/{mode}.md` — 对应模式的具体行为规则
 
 ## 标准执行流程
 
@@ -72,6 +73,12 @@ Step 2.5: OKR Metadata 补全（按 engine/06-metadata.md，仅 vault.enabled=tr
         → 对每个 P0/P1 KR 自然语言抽取 deadline，命中则候选
         → 候选给用户一次性确认；缺失项逐个对话补全
         → 写入 metadata 文件
+        ↓
+Step 2.7: Todos 读取（按 engine/07-todos.md，仅 vault.enabled=true 且 vault.todos 已配置时）
+        → 加载 {vault.path}/{vault.todos}（缺失则询问是否创建空模板）
+        → 解析 Open / Done / Parked 三段 + 标签
+        → 派生 urgency（overdue / this_week / next_two_weeks / no_ddl / blocked / parked）
+        → 文件全程只读，skill 不修改
         ↓
 Step 3: 分析（按 engine/02-analyze.md + frameworks/{framework}.md）
         → 对比计划 vs 执行
