@@ -195,6 +195,8 @@ life-review-os 自带的 watch-list 扫描和 OKR metadata 持久化功能依赖
 
 启用方式：把 `config.yaml` 的 `vault.enabled` 改为 `true`，`vault.path` 指向你的笔记目录。第一次运行时 skill 会询问是否创建 `okr-metadata.yaml`（用于 deadline / status 等结构化补全）。
 
+启用 vault 后另一个可选功能：**Todos 文件**。把 `vault.todos` 指向 `99_Meta/todos.md`（或你喜欢的路径），用来记录 OKR 之外的小颗粒待办（"续车保"、"买羽毛球鞋"这类事，不值得做成 KR 但需要别忘了）。skill 在 weekly review 时只读不改这个文件，把逾期 / urgent 的项作为背景列出来，最多折入 2 条到下周"如有余力"区块。格式参考 [`examples/todos.md.example`](examples/todos.md.example)。
+
 不想用知识库的话，把 `vault.enabled` 设为 `false` 即可——核心 OKR 复盘功能完全不受影响。
 
 详见 [`references/metadata-conventions.md`](references/metadata-conventions.md)。
