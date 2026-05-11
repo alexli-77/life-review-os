@@ -1,7 +1,9 @@
 # Life Review OS
 
-> 一个把"周计划 / 双周复盘 / 季末方向校准"做成自动化流程的 Claude Skill。
-> 读取你的飞书 Weekly 文档，对比计划与执行，生成下周计划，自动写回。
+[English](README.md) | [中文](README.zh.md)
+
+> A Claude Skill that automates **weekly planning / bi-weekly retros / quarterly direction checks**.
+> Reads your Lark (Feishu) Weekly doc, compares plan vs. execution, generates next week's plan, and writes it back automatically.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Skill](https://img.shields.io/badge/claude-skill-orange)
@@ -9,55 +11,55 @@
 
 ---
 
-## 这是什么？
+## What is this?
 
-Life Review OS 是为 **已经在飞书上做 OKR + 周计划** 的人设计的 Claude Skill。
+Life Review OS is a Claude Skill built for people who **already do OKR + weekly planning in Lark (Feishu)**.
 
-它解决一个具体的痛点：**计划做了，但很少回头看；执行偏了，自己感觉不到。**
+It solves a very specific pain: **you make plans, but rarely look back; execution drifts, and you don't feel it.**
 
-每周（或每两周、每季末）触发一次 skill，它会：
+Trigger the skill once a week (or every two weeks, or at quarter end) and it will:
 
-1. 读你的 OKR 定义和最近 N 周的执行表格
-2. 对比计划 vs 实际，识别完成 / 未完成 / 偏移
-3. 结合你口头给出的 retro 和当周感受
-4. 生成下周计划（含 MIT），写回飞书表格
+1. Read your OKR definition and the last N weeks of execution table
+2. Compare plan vs. actual — flag completed / missed / drifted items
+3. Combine your verbal retro and how you felt this week
+4. Generate next week's plan (with MITs) and write it back into the Lark table
 
-底层分析框架可选：
-- `stephen-covey` — Q1/Q2/Q3/Q4 + P/PC 平衡 + 使命对齐
-- `okr-pure` — 纯 KR 完成率 + 偏移检测
+Choice of analysis framework:
+- `stephen-covey` — Q1/Q2/Q3/Q4 + P/PC balance + mission alignment
+- `okr-pure` — pure KR completion rate + drift detection
 
 ---
 
-## 快速开始
+## Quick start
 
-### 前置条件
+### Prerequisites
 
-- [Claude Code](https://claude.com/claude-code) CLI 已安装
-- [lark-cli](https://github.com/larksuite/lark-openapi-cli) 已安装并完成 `lark-cli auth login`
-- 一份在飞书上的 Weekly 文档（含 OKR 段落和按周分列的执行表格）
+- [Claude Code](https://claude.com/claude-code) CLI installed
+- [lark-cli](https://github.com/larksuite/lark-openapi-cli) installed, with `lark-cli auth login` done
+- A Lark Weekly doc (containing an OKR section + a per-week execution table)
 
-### 安装
+### Install
 
 ```bash
-# 1. 克隆到 Claude skills 目录
+# 1. Clone into your Claude skills directory
 git clone https://github.com/alexli-77/life-review-os.git \
   ~/.claude/skills/weekly-review
 
-# 2. 复制配置模板并填入你的飞书 token
+# 2. Copy the config template and fill in your Lark tokens
 cd ~/.claude/skills/weekly-review
 cp config.example.yaml config.yaml
 $EDITOR config.yaml
 ```
 
-### 配置 `config.yaml`
+### Configure `config.yaml`
 
 ```yaml
 user:
-  name: 你的名字
-  symbol: 🐧                # 飞书文档中标识你的 emoji
+  name: Your Name
+  symbol: 🐧                # emoji that identifies you in the Lark doc
   timezone: America/Toronto
 
-framework: stephen-covey    # 或 okr-pure
+framework: stephen-covey    # or okr-pure
 
 documents:
   mission_statement: YOUR_MISSION_DOC_TOKEN
@@ -77,145 +79,145 @@ modes:
     lookback_weeks: 4
     auto_write: true
   quarterly:
-    auto_write: false       # 季末报告先确认再写回
+    auto_write: false       # quarterly reports require manual confirmation before write-back
 ```
 
-> 飞书文档 token 在文档 URL 中：`https://xxx.feishu.cn/docx/[TOKEN]`
+> The Lark doc token is in the URL: `https://xxx.feishu.cn/docx/[TOKEN]`
 >
-> 表格 `block_id` 通过 `lark-cli api GET /open-apis/docx/v1/documents/{token}/blocks` 找出。
+> The table `block_id` can be found via `lark-cli api GET /open-apis/docx/v1/documents/{token}/blocks`.
 
 ---
 
-## 使用
+## Usage
 
-在 Claude Code 中：
-
-```
-/weekly-review              # 周模式（默认）
-/weekly-review weekly       # 同上
-/weekly-review biweekly     # 双周复盘 + 趋势分析
-/weekly-review quarterly    # 季末深度复盘 + 使命对齐
-```
-
-也可以用自然语言触发："帮我做 weekly review" / "做双周复盘"。
-
-### 触发后的标准流程
+Inside Claude Code:
 
 ```
-Step 1: skill 询问你的 retro 和本周感受
-Step 2: 读取 OKR 段落 + 最近 N 周执行表
-Step 3: 对比分析（完成 / 未完成 / 偏移）
-Step 4: 生成下周计划（MIT + 6-8 条要务）
-Step 5: 在对话中输出分析摘要
-Step 6: 自动写回飞书表格新列（quarterly 模式需手动确认）
+/weekly-review              # weekly mode (default)
+/weekly-review weekly       # same as above
+/weekly-review biweekly     # bi-weekly retro + trend analysis
+/weekly-review quarterly    # quarter-end deep retro + mission alignment
 ```
 
-### 输入示例
+You can also trigger via natural language: "do my weekly review" / "run a bi-weekly retro".
+
+### Standard flow after trigger
 
 ```
-retro: 完成了主项目日常工作，副项目还差最后一步没推进
-感受: 情绪有点低落，但运动状态很好，外部压力大
+Step 1: Skill asks for your retro and how this week felt
+Step 2: Reads the OKR section + last N weeks of execution table
+Step 3: Comparative analysis (completed / missed / drifted)
+Step 4: Generates next week's plan (MIT + 6-8 priority items)
+Step 5: Outputs an analysis summary in the chat
+Step 6: Auto-writes a new column to the Lark table (quarterly mode requires manual confirmation)
+```
+
+### Input example
+
+```
+retro: Finished the main project's day-to-day work; side project still stuck before the last step.
+how I felt: A bit low mood, but workouts were on point. External pressure was high.
 ```
 
 ---
 
-## 三种模式对比
+## Three modes compared
 
 | | weekly | biweekly | quarterly |
 |---|---|---|---|
-| 频率 | 每周 | 每两周 | 每季末 |
-| 读取范围 | 最近 2 周 | 最近 4 周 | 全季度 + 使命宣言 + 5 年计划 |
-| 额外输出 | — | KR 趋势表 + MIT 完成率 | 使命对齐 + 长期停滞 + 方向校准 |
-| 自动写回 | ✅ | ✅ | ❌（需确认） |
-| 时长 | < 2 分钟 | < 5 分钟 | 15-30 分钟 |
+| Frequency | every week | every two weeks | every quarter end |
+| Read range | last 2 weeks | last 4 weeks | full quarter + mission statement + 5-year plan |
+| Extra output | — | KR trend table + MIT completion rate | mission alignment + long-term stagnation + direction check |
+| Auto write-back | ✅ | ✅ | ❌ (needs confirmation) |
+| Duration | < 2 min | < 5 min | 15-30 min |
 
 ---
 
-## 文件结构
+## File structure
 
 ```
 life-review-os/
-├── SKILL.md                # Claude skill 入口
-├── config.example.yaml     # 配置模板（复制为 config.yaml）
-├── engine/                 # 通用执行引擎
-│   ├── 01-read.md          # 读取飞书文档
-│   ├── 02-analyze.md       # 分析逻辑
-│   ├── 03-plan.md          # 生成下周计划
-│   └── 04-write.md         # 写回飞书
-├── frameworks/             # 分析框架（可扩展）
+├── SKILL.md                # Claude skill entry point
+├── config.example.yaml     # config template (copy to config.yaml)
+├── engine/                 # general execution engine
+│   ├── 01-read.md          # read Lark docs
+│   ├── 02-analyze.md       # analysis logic
+│   ├── 03-plan.md          # generate next week's plan
+│   └── 04-write.md         # write back to Lark
+├── frameworks/             # analysis frameworks (extensible)
 │   ├── stephen-covey.md
 │   └── okr-pure.md
-└── modes/                  # 三种模式的具体规则
+└── modes/                  # rules for the three modes
     ├── weekly.md
     ├── biweekly.md
     └── quarterly.md
 ```
 
-**两层架构：** `engine/` `frameworks/` `modes/` 是通用的，所有用户共用；
-`config.yaml` 是个人的，被 `.gitignore`，不会进仓库。
-迁移到其他人只需改 `config.yaml`。
+**Two-layer architecture:** `engine/`, `frameworks/`, `modes/` are general — shared by all users.
+`config.yaml` is personal — `.gitignore`'d, never committed.
+Migrating to a new user means changing only `config.yaml`.
 
 ---
 
-## 扩展
+## Extending
 
-### 新增分析框架
+### Add a new analysis framework
 
-在 `frameworks/` 下加一个 `.md` 文件，按现有文件的结构定义：
-- 输入：OKR + 最近 N 周执行数据
-- 输出：诊断摘要
+Add a `.md` file under `frameworks/`, following the structure of existing files:
+- Input: OKR + last N weeks of execution data
+- Output: diagnostic summary
 
-然后在 `config.yaml` 把 `framework` 改成新文件名（不含 `.md`）。
+Then in `config.yaml`, set `framework` to the new file name (without `.md`).
 
-### 替换数据源
+### Replace the data source
 
-当前实现绑定飞书。如果你用 Notion / Obsidian / Google Docs，
-改写 `engine/01-read.md` 和 `engine/04-write.md` 即可，其他文件无需改动。
-
----
-
-## 限制
-
-- ❌ 不支持定时触发——需要你手动执行（或自己用 launchd / cron 包一层）
-- ❌ 写回操作以你的飞书用户身份执行，不会代表"组织"
-- ⚠️ 飞书文档结构需要符合预期：OKR 段落 + 按周分列的表格
+The current implementation is bound to Lark. If you use Notion / Obsidian / Google Docs,
+rewrite `engine/01-read.md` and `engine/04-write.md` — the other files don't need changes.
 
 ---
 
-## 可选：与 Obsidian 知识库联动
+## Limitations
 
-life-review-os 自带的 watch-list 扫描和 OKR metadata 持久化功能依赖一个本地知识库目录（任何 markdown 笔记目录都可以——Obsidian / Logseq / 纯 md folder 均支持）。
+- ❌ No scheduled triggers — you run it manually (or wrap it yourself with `launchd` / cron)
+- ❌ Write-back acts as your Lark user, not as an "organization"
+- ⚠️ The Lark doc structure must match the expected layout: OKR section + per-week table
 
-如果你还没有合适的知识库结构，推荐使用配套模板：
+---
+
+## Optional: Obsidian knowledge-base integration
+
+The watch-list scan and OKR metadata persistence features rely on a local knowledge-base directory (any markdown notes folder works — Obsidian / Logseq / plain `.md` folders all supported).
+
+If you don't have a suitable knowledge-base structure yet, use the companion template:
 
 > **Leon-knowledgeBase-template**
 > https://github.com/alexli-77/Leon-knowledgeBase-template
 >
-> Obsidian PARA 结构 + Claude Code `/record` skill 一键部署。已包含本 skill 需要的 `99_Meta/watch-list.md` 结构。
+> Obsidian PARA structure + Claude Code `/record` skill, one-command deploy. Already includes the `99_Meta/watch-list.md` structure this skill expects.
 
-启用方式：把 `config.yaml` 的 `vault.enabled` 改为 `true`，`vault.path` 指向你的笔记目录。第一次运行时 skill 会询问是否创建 `okr-metadata.yaml`（用于 deadline / status 等结构化补全）。
+Enable: set `vault.enabled` to `true` in `config.yaml` and point `vault.path` to your notes directory. On first run, the skill will ask whether to create `okr-metadata.yaml` (used for deadline / status structured fields).
 
-启用 vault 后另一个可选功能：**Todos 文件**。把 `vault.todos` 指向 `99_Meta/todos.md`（或你喜欢的路径），用来记录 OKR 之外的小颗粒待办（"续车保"、"买羽毛球鞋"这类事，不值得做成 KR 但需要别忘了）。skill 在 weekly review 时只读不改这个文件，把逾期 / urgent 的项作为背景列出来，最多折入 2 条到下周"如有余力"区块。格式参考 [`examples/todos.md.example`](examples/todos.md.example)。
+Once vault is enabled, another optional feature unlocks: **Todos file**. Point `vault.todos` to `99_Meta/todos.md` (or wherever you prefer) to track small ad-hoc todos that exist outside your OKRs (things like "renew car insurance" or "buy new badminton shoes" — not worth a KR, but you don't want to forget). The skill only reads (never writes) this file during weekly review, surfaces overdue / urgent items as background, and folds up to 2 items into next week's "if there's bandwidth" block. Format reference: [`examples/todos.md.example`](examples/todos.md.example).
 
-不想用知识库的话，把 `vault.enabled` 设为 `false` 即可——核心 OKR 复盘功能完全不受影响。
+Don't want to use a knowledge base? Set `vault.enabled` to `false` — core OKR review still works exactly the same.
 
-详见 [`references/metadata-conventions.md`](references/metadata-conventions.md)。
+See [`references/metadata-conventions.md`](references/metadata-conventions.md) for details.
 
 ---
 
 ## Contributing
 
-欢迎 bug 修复、文档改进、新增分析框架等贡献。
+Bug fixes, doc improvements, new analysis frameworks — all welcome.
 
-提 PR 前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，里面写明了：
-- 哪些 PR 直接提，哪些建议先开 issue 讨论
-- Fork + branch + PR 完整流程
-- Commit message 风格和敏感信息约束
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR. It covers:
+- Which PRs can go directly, which should start as an issue
+- The full fork + branch + PR flow
+- Commit message style and constraints on sensitive info
 
-> 这是个人项目，PR 响应可能 1-2 周。如果你的改动有时效性需求，建议先开 issue。
+> This is a personal project. PR response time may be 1-2 weeks. If your change is time-sensitive, open an issue first.
 
 ---
 
 ## License
 
-MIT — 自由使用、修改、分发。
+MIT — use, modify, distribute freely.
