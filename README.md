@@ -186,7 +186,7 @@ rewrite `engine/01-read.md` and `engine/04-write.md` — the other files don't n
 
 ## Optional: Obsidian knowledge-base integration
 
-The watch-list scan and OKR metadata persistence features rely on a local knowledge-base directory (any markdown notes folder works — Obsidian / Logseq / plain `.md` folders all supported).
+The watch-list scan and OKR metadata persistence features rely on a knowledge-base directory (any markdown notes folder works — Obsidian / Logseq / plain `.md` folders all supported). By default the skill reads local files first; if `vault.source: auto` and `vault.api.enabled: true` are configured, it can fall back to a vault API when the local vault is unavailable.
 
 If you don't have a suitable knowledge-base structure yet, use the companion template:
 

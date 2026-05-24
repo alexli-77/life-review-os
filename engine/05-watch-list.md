@@ -1,6 +1,6 @@
 # Engine 05：扫描 Watch List
 
-读取本地知识库中的 `99_Meta/watch-list.md`（如果配置了 vault），把当前到期需要 review 的事项抓出来供用户决策。
+读取知识库中的 `99_Meta/watch-list.md`（如果配置了 vault），把当前到期需要 review 的事项抓出来供用户决策。
 **仅在 `config.yaml` 中 `vault.enabled: true` 时执行**——这是可选步骤，没有 Obsidian / 知识库的人完全不需要。
 
 ## 何时执行
@@ -18,17 +18,68 @@
 # config.yaml
 vault:
   enabled: true                                                       # 关闭则跳过本步骤
+  source: auto                                                        # auto | local | api
   path: /Users/xxx/Desktop/LeonKnowledgeBase/Private-Vault             # 知识库根
   watch_list: 99_Meta/watch-list.md                                    # 相对路径
+  api:
+    enabled: true
+    base_url_env: VAULT_API_BASE_URL
+    token_env: VAULT_API_TOKEN
+    file_endpoint_template: "{base_url}/vault/{path}"
+    auth_header: "Authorization: Bearer {token}"
+    verify_tls: false
 ```
 
 ## 执行步骤
 
 1. **读取 watch-list 文件**
 
+读取顺序由 `vault.source` 决定：
+
+| source | 行为 |
+|---|---|
+| `local` | 只读取本地 `{vault.path}/{vault.watch_list}`；不存在则跳过 |
+| `api` | 只通过 `vault.api` 读取 |
+| `auto` | 先读本地；本地 vault/path/watch-list 不存在时，尝试 API fallback |
+
+### 方式 A：本地读取
+
 ```bash
 cat "{vault.path}/{vault.watch_list}"
 ```
+
+### 方式 B：API fallback
+
+当 `vault.api.enabled = true` 且 source 为 `auto` 或 `api` 时：
+
+1. 从 `vault.api.base_url_env` 指定的环境变量读取 base URL；默认可用 `VAULT_API_BASE_URL`
+2. 从 `vault.api.token_env` 指定的环境变量读取 token；默认可用 `VAULT_API_TOKEN`
+3. 将 `vault.watch_list` URL encode 后代入 `file_endpoint_template`
+4. 带上 `auth_header` 发起 GET 请求
+
+通用命令：
+
+```bash
+python3 - <<'PY'
+import os, urllib.parse, subprocess
+
+base_url = os.environ.get("VAULT_API_BASE_URL", "").rstrip("/")
+token = os.environ.get("VAULT_API_TOKEN", "")
+path = urllib.parse.quote("99_Meta/watch-list.md", safe="")
+url = f"{base_url}/vault/{path}"
+
+cmd = ["curl", "-sS", "--fail"]
+if url.startswith("https://"):
+    cmd += ["-k"]
+if token:
+    cmd += ["-H", f"Authorization: Bearer {token}"]
+cmd.append(url)
+
+print(subprocess.check_output(cmd, text=True))
+PY
+```
+
+如果 API 不可达、环境变量缺失、或返回 401/403/404：说明本次 watch-list 读取失败，记录原因后跳过本步骤，继续生成 weekly review。
 
 2. **解析"Watching"和"Considering"两个章节**
 
@@ -86,8 +137,9 @@ watch-list 的标准结构（来自 `Leon-knowledgeBase-template/99_Meta/watch-l
 
 ## 错误处理
 
-- vault.path 不存在 → 报错并跳过本步骤，但继续后面的流程
-- watch-list.md 不存在 → 提示用户"未找到 watch-list.md，是否要创建？"，跳过决策
+- vault.path 或 watch-list.md 不存在，且 `source: auto` → 尝试 API fallback
+- vault.path 或 watch-list.md 不存在，且 `source: local` → 记录原因并跳过本步骤
+- API 环境变量缺失 / API 不可达 / 权限不足 → 记录原因并跳过本步骤，继续后面的流程
 - 无到期项 → 输出"✅ 没有到期需要 review 的事项"，跳过决策环节
 
 ## 与下周计划的衔接

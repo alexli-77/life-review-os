@@ -186,7 +186,7 @@ life-review-os/
 
 ## 可选：与 Obsidian 知识库联动
 
-life-review-os 自带的 watch-list 扫描和 OKR metadata 持久化功能依赖一个本地知识库目录（任何 markdown 笔记目录都可以——Obsidian / Logseq / 纯 md folder 均支持）。
+life-review-os 自带的 watch-list 扫描和 OKR metadata 持久化功能依赖一个知识库目录（任何 markdown 笔记目录都可以——Obsidian / Logseq / 纯 md folder 均支持）。默认优先读取本地文件；如果配置了 `vault.source: auto` 和 `vault.api.enabled: true`，本地 vault 不可用时可以 fallback 到 vault API。
 
 如果你还没有合适的知识库结构，推荐使用配套模板：
 

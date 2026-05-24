@@ -42,7 +42,7 @@ keywords:
 3. `engine/02-analyze.md` — 分析逻辑
 4. `engine/03-plan.md` — 生成下周计划
 5. `engine/04-write.md` — 写回飞书（仅 auto_write=true 时执行）
-6. `engine/05-watch-list.md` — 扫描本地知识库 watch-list（仅 vault.enabled=true 时执行）
+6. `engine/05-watch-list.md` — 扫描知识库 watch-list（仅 vault.enabled=true 时执行；支持本地/API fallback）
 7. `engine/06-metadata.md` — OKR metadata 补全与读取（仅 vault.enabled=true 时执行）
 8. `engine/07-todos.md` — Todos 文件读取（仅 vault.enabled=true 且 vault.todos 已配置时）
 9. `frameworks/{framework}.md` — 对应的分析框架（从 config.yaml 读取 framework 字段）
@@ -55,8 +55,9 @@ Step 0: 读取 config.yaml
         → 确定 user.symbol、documents、framework、modes.{mode}
         ↓
 Step 0.5: Vault 检测（仅 vault.enabled=true 时）
-        → vault.path 存在 → 继续
-        → vault.path 缺失 → 显示 onboarding 菜单（见下）
+        → vault.source=local/auto 且 vault.path 存在 → 继续本地读取
+        → vault.source=api 或本地缺失且 vault.source=auto → 按 vault.api 尝试 API fallback
+        → 本地/API 都不可用 → 显示 onboarding 菜单（见下）或本次跳过 vault
         → 用户选 (a)/(b)/(c)/skip 后继续
         ↓
 Step 1: 询问用户输入（如未在触发时提供）
@@ -86,7 +87,7 @@ Step 3: 分析（按 engine/02-analyze.md + frameworks/{framework}.md）
         → 结合用户 retro、感受、metadata（deadline / status）校正结论
         ↓
 Step 3.5: 扫描 Watch List（按 engine/05-watch-list.md，仅 vault.enabled=true 时）
-        → 读取 99_Meta/watch-list.md
+        → 从本地或 API 读取 99_Meta/watch-list.md
         → 抓出 next-review <= 今天 的事项
         → 逐项问用户：触发 / 推迟 / 放弃
         → 决策落地：修改笔记 frontmatter + watch-list 栏目
