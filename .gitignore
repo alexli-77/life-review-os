@@ -10,4 +10,5 @@ config.*.yaml
 tokens/
 secrets/
 .lark/
+.runs/
 .DS_Store

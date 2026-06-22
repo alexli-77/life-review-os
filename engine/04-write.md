@@ -9,8 +9,10 @@
 3. 确认飞书认证有效（`--as user`）
 4. 确认 `engine/01-read.md` 已成功校验 `table_marker`，且 `engine/03-plan.md`
    的所有 KR 均来自 `🐶 重点OKR`
+5. 确认每条下周要务都带有明确的第一列 OKR 行位置；无法定位到行的要务不得写回
 
 如果无法确认目标表格属于 `🐶`，禁止写回。
+如果无法确认要务对应第一列哪一行，禁止写回，不能默认写入第一行。
 
 ## Step 1：获取表格当前列结构
 
@@ -67,6 +69,8 @@ lark-cli api POST "/open-apis/docx/v1/documents/{doc_token}/blocks/{header_cell_
 
 每条要务写为一个有序列表项，格式保持 `🐶` 表格历史每周要务风格。
 MIT 用红色文字标注。每条 KR 前缀必须对应 `🐶 重点OKR` 中的 KR 或稳定简称。
+写入时必须使用该要务对应的第一列 OKR 行的单元格：`cell = cells[row_index * col_count + task_col]`。
+同一 OKR 行下的多条要务可按顺序写入同一个单元格；不同 OKR 行不得合并到第一行。
 
 ```bash
 # 写入普通要务
