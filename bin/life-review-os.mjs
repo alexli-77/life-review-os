@@ -123,9 +123,7 @@ async function writebackRun(runId) {
   const targetHeader = run.writeback.task_header;
   let taskColumn = findHeader(table.headers, targetHeader);
   let insertedColumns = false;
-  if (taskColumn >= 0) {
-    await assertColumnEmpty(weekly, table, taskColumn);
-  } else {
+  if (taskColumn < 0) {
     insertedColumns = true;
     await insertWeekColumns(weekly, run.writeback.layout);
     const updated = await readWeeklyTable(weekly);
@@ -134,21 +132,26 @@ async function writebackRun(runId) {
   }
   if (taskColumn < 0) throw new Error(`Could not locate target header after insert: ${targetHeader}`);
   const finalTable = await readWeeklyTable(weekly);
-  await assertColumnEmpty(weekly, finalTable, taskColumn);
-  for (const item of run.writeback.items) {
-    if (typeof item.target_row !== 'number') {
-      throw new Error(`Writeback item is not mapped to a first-column OKR row: ${item.text}`);
+  const rowPlan = await planRowWrites(weekly, finalTable, taskColumn, run.writeback.items);
+  let writtenCount = 0;
+  let skippedCount = 0;
+  for (const row of rowPlan.rows) {
+    const cellId = finalTable.cellIds[row.rowIndex][taskColumn];
+    for (const item of row.toWrite) {
+      await postOrderedItem(weekly, cellId, item.text, item.is_mit);
+      writtenCount += 1;
     }
-    const cellId = finalTable.cellIds[item.target_row][taskColumn];
-    await postOrderedItem(weekly, cellId, item.text, item.is_mit);
+    skippedCount += row.skipped.length;
   }
   return {
     ok: true,
     run_id: run.run_id,
     written: true,
+    already_written: writtenCount === 0 && skippedCount > 0,
     inserted_columns: insertedColumns,
     task_header: targetHeader,
-    item_count: run.writeback.items.length,
+    item_count: writtenCount,
+    skipped_count: skippedCount,
   };
 }
 
@@ -607,6 +610,71 @@ async function assertColumnEmpty(weekly, table, column) {
   if (filled.length) throw new Error(`Target column already has content in rows ${filled.join(', ')}; refusing to overwrite.`);
 }
 
+async function planRowWrites(weekly, table, column, items) {
+  const grouped = groupItemsByTargetRow(items, table.rowCount);
+  const plannedRows = new Set([...grouped.keys()]);
+  const existingValues = await readColumn(weekly, table, column);
+  const conflictingRows = [];
+  const rows = [];
+
+  for (let row = 1; row < table.rowCount; row += 1) {
+    const existing = existingValues[row] || '';
+    if (!hasMeaningfulCellContent(existing)) {
+      if (grouped.has(row)) rows.push({ rowIndex: row, toWrite: grouped.get(row), skipped: [] });
+      continue;
+    }
+    if (!plannedRows.has(row)) {
+      conflictingRows.push(row);
+      continue;
+    }
+    const toWrite = [];
+    const skipped = [];
+    for (const item of grouped.get(row) || []) {
+      if (cellContainsItem(existing, item.text)) skipped.push(item);
+      else toWrite.push(item);
+    }
+    if (toWrite.length > 0 && skipped.length === 0) {
+      conflictingRows.push(row);
+    } else {
+      rows.push({ rowIndex: row, toWrite, skipped });
+    }
+  }
+
+  if (conflictingRows.length) {
+    throw new Error(`Target column already has unrelated content in rows ${conflictingRows.join(', ')}; refusing to overwrite.`);
+  }
+  return { rows };
+}
+
+function groupItemsByTargetRow(items, rowCount) {
+  const grouped = new Map();
+  for (const item of items) {
+    if (typeof item.target_row !== 'number' || item.target_row <= 0 || item.target_row >= rowCount) {
+      throw new Error(`Writeback item is not mapped to a first-column OKR row: ${item.text}`);
+    }
+    grouped.set(item.target_row, [...(grouped.get(item.target_row) || []), item]);
+  }
+  return grouped;
+}
+
+function cellContainsItem(cellText, itemText) {
+  const cell = comparableText(cellText);
+  const item = comparableText(itemText);
+  if (!cell || !item) return false;
+  return cell.includes(item) || item.includes(cell);
+}
+
+function hasMeaningfulCellContent(cellText) {
+  return Boolean(comparableText(cellText));
+}
+
+function comparableText(value) {
+  return String(value)
+    .replace(/MIT|🔴|✅|⭕️|⭕|❌|🚧/gi, '')
+    .replace(/[\s`*_>#:/：;；,，.。()（）\[\]【】"'“”‘’/\\|-]/g, '')
+    .toLowerCase();
+}
+
 async function postText(weekly, cellId, content) {
   await larkApi('POST', `/open-apis/docx/v1/documents/${weekly.token}/blocks/${cellId}/children`, {
     children: [{ block_type: 2, text: { elements: [{ text_run: { content } }], style: {} } }],
@@ -621,7 +689,7 @@ async function postOrderedItem(weekly, cellId, content, isMit) {
         block_type: 13,
         ordered: {
           elements: isMit
-            ? [{ text_run: { content: content.replace(/\s*🔴\s*/g, ' ').trim() } }, { text_run: { content: ' 🔴', text_element_style: { text_color: 1 } } }]
+            ? [{ text_run: { content: formatMitContent(content) } }, { text_run: { content: ' 🔴', text_element_style: { text_color: 1 } } }]
             : [{ text_run: { content } }],
           style: {},
         },
@@ -629,6 +697,14 @@ async function postOrderedItem(weekly, cellId, content, isMit) {
     ],
     index: 0,
   });
+}
+
+function formatMitContent(content) {
+  const clean = String(content)
+    .replace(/^\s*(?:MIT\s*){1,}🔴?\s*[:：]?\s*/i, '')
+    .replace(/\s*🔴\s*/g, ' ')
+    .trim();
+  return `MIT: ${clean}`;
 }
 
 function targetWeekDate(config, now) {
