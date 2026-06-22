@@ -36,7 +36,7 @@ Life Review OS 是为 **已经在飞书上做 OKR + 周计划** 的人设计的 
 
 - [Claude Code](https://claude.com/claude-code) CLI 已安装
 - [lark-cli](https://github.com/larksuite/lark-openapi-cli) 已安装并完成 `lark-cli auth login`
-- 一份在飞书上的 Weekly 文档（含 OKR 段落和按周分列的执行表格）
+- 一份在飞书上的 Weekly 文档（含 `🐶 重点OKR` 和 `🐶` 每周要务表格）
 
 ### 安装
 
@@ -56,7 +56,7 @@ $EDITOR config.yaml
 ```yaml
 user:
   name: 你的名字
-  symbol: 🐧                # 飞书文档中标识你的 emoji
+  symbol: 🐶                # 飞书文档中标识你的 emoji
   timezone: America/Toronto
 
 framework: stephen-covey    # 或 okr-pure
@@ -67,7 +67,11 @@ documents:
   weekly:
     - year: 2026
       token: YOUR_2026_WEEKLY_TOKEN
-      table_block_id: YOUR_2026_TABLE_BLOCK_ID
+      table_block_id: YOUR_2026_DOG_WEEKLY_TABLE_BLOCK_ID
+      okr_heading: "🐶 重点OKR"
+      table_marker: "🐶"
+      task_header_suffix: "要务"
+      retro_header_suffix: "retro"
     - year: 2025
       token: YOUR_2025_WEEKLY_TOKEN
 
@@ -84,7 +88,18 @@ modes:
 
 > 飞书文档 token 在文档 URL 中：`https://xxx.feishu.cn/docx/[TOKEN]`
 >
-> 表格 `block_id` 通过 `lark-cli api GET /open-apis/docx/v1/documents/{token}/blocks` 找出。
+> 表格 `block_id` 必须是 `🐶` 每周要务表格，通过 `lark-cli api GET /open-apis/docx/v1/documents/{token}/blocks` 找出。
+>
+> `config.yaml` 会被 git 忽略。不要把真实飞书 token、key、`.env` 或本地 vault 私密路径提交到仓库。
+
+### Feishu Weekly 文档约定
+
+weekly / biweekly 模式严格依赖这两个位置：
+
+1. `🐶 重点OKR`：当前周期的 Objective / KR 来源。下周 KR 必须从这里推导。
+2. `🐶` 每周要务表格：review 的事实来源，读取最近 N 周的 `{日期范围} 要务` 与 `{日期范围} retro` 列，并把下周计划写回同一张表。
+
+如果找不到 `🐶 重点OKR`、`table_block_id` 不是 `🐶` 表格，或最近 N 周缺少要务/retro 列，skill 会停止并提示你修正配置或文档结构。
 
 ---
 
@@ -105,7 +120,7 @@ modes:
 
 ```
 Step 1: skill 询问你的 retro 和本周感受
-Step 2: 读取 OKR 段落 + 最近 N 周执行表
+Step 2: 读取 `🐶 重点OKR` + `🐶` 表格最近 N 周要务/retro
 Step 3: 对比分析（完成 / 未完成 / 偏移）
 Step 4: 生成下周计划（MIT + 6-8 条要务）
 Step 5: 在对话中输出分析摘要
@@ -180,13 +195,14 @@ life-review-os/
 
 - ❌ 不支持定时触发——需要你手动执行（或自己用 launchd / cron 包一层）
 - ❌ 写回操作以你的飞书用户身份执行，不会代表"组织"
-- ⚠️ 飞书文档结构需要符合预期：OKR 段落 + 按周分列的表格
+- ⚠️ 飞书文档结构需要符合预期：`🐶 重点OKR` + `🐶` 每周要务表格
+- ⚠️ 真实 token / key / 私人 config 只放在本地，不能提交
 
 ---
 
 ## 可选：与 Obsidian 知识库联动
 
-life-review-os 自带的 watch-list 扫描和 OKR metadata 持久化功能依赖一个本地知识库目录（任何 markdown 笔记目录都可以——Obsidian / Logseq / 纯 md folder 均支持）。
+life-review-os 自带的 watch-list 扫描和 OKR metadata 持久化功能依赖一个知识库目录（任何 markdown 笔记目录都可以——Obsidian / Logseq / 纯 md folder 均支持）。默认优先读取本地文件；如果配置了 `vault.source: auto` 和 `vault.api.enabled: true`，本地 vault 不可用时可以 fallback 到 vault API。
 
 如果你还没有合适的知识库结构，推荐使用配套模板：
 

@@ -36,7 +36,7 @@ Choice of analysis framework:
 
 - [Claude Code](https://claude.com/claude-code) CLI installed
 - [lark-cli](https://github.com/larksuite/lark-openapi-cli) installed, with `lark-cli auth login` done
-- A Lark Weekly doc (containing an OKR section + a per-week execution table)
+- A Lark Weekly doc (containing `🐶 重点OKR` and the `🐶` weekly task table)
 
 ### Install
 
@@ -56,7 +56,7 @@ $EDITOR config.yaml
 ```yaml
 user:
   name: Your Name
-  symbol: 🐧                # emoji that identifies you in the Lark doc
+  symbol: 🐶                # emoji that identifies you in the Lark doc
   timezone: America/Toronto
 
 framework: stephen-covey    # or okr-pure
@@ -67,7 +67,11 @@ documents:
   weekly:
     - year: 2026
       token: YOUR_2026_WEEKLY_TOKEN
-      table_block_id: YOUR_2026_TABLE_BLOCK_ID
+      table_block_id: YOUR_2026_DOG_WEEKLY_TABLE_BLOCK_ID
+      okr_heading: "🐶 重点OKR"
+      table_marker: "🐶"
+      task_header_suffix: "要务"
+      retro_header_suffix: "retro"
     - year: 2025
       token: YOUR_2025_WEEKLY_TOKEN
 
@@ -84,7 +88,18 @@ modes:
 
 > The Lark doc token is in the URL: `https://xxx.feishu.cn/docx/[TOKEN]`
 >
-> The table `block_id` can be found via `lark-cli api GET /open-apis/docx/v1/documents/{token}/blocks`.
+> The table `block_id` must point to the `🐶` weekly task table. Find it via `lark-cli api GET /open-apis/docx/v1/documents/{token}/blocks`.
+>
+> `config.yaml` is ignored by git. Do not commit real Lark tokens, keys, `.env` files, or private local vault paths.
+
+### Feishu Weekly document contract
+
+weekly / biweekly mode strictly depends on two locations:
+
+1. `🐶 重点OKR`: the source of Objective / KR definitions for the current cycle. Next-week KRs must derive from here.
+2. The `🐶` weekly task table: the source of truth for review. The skill reads the latest N weeks of `{date range} 要务` and `{date range} retro` columns, then writes next week's plan back to the same table.
+
+If `🐶 重点OKR` is missing, `table_block_id` does not point to the `🐶` table, or the latest N weeks are missing task/retro columns, the skill stops and asks you to fix config or document structure.
 
 ---
 
@@ -105,7 +120,7 @@ You can also trigger via natural language: "do my weekly review" / "run a bi-wee
 
 ```
 Step 1: Skill asks for your retro and how this week felt
-Step 2: Reads the OKR section + last N weeks of execution table
+Step 2: Reads `🐶 重点OKR` + latest N weeks of tasks/retro from the `🐶` table
 Step 3: Comparative analysis (completed / missed / drifted)
 Step 4: Generates next week's plan (MIT + 6-8 priority items)
 Step 5: Outputs an analysis summary in the chat
@@ -180,13 +195,14 @@ rewrite `engine/01-read.md` and `engine/04-write.md` — the other files don't n
 
 - ❌ No scheduled triggers — you run it manually (or wrap it yourself with `launchd` / cron)
 - ❌ Write-back acts as your Lark user, not as an "organization"
-- ⚠️ The Lark doc structure must match the expected layout: OKR section + per-week table
+- ⚠️ The Lark doc structure must match the expected layout: `🐶 重点OKR` + `🐶` weekly task table
+- ⚠️ Real tokens, keys, and private config must stay local and must not be committed
 
 ---
 
 ## Optional: Obsidian knowledge-base integration
 
-The watch-list scan and OKR metadata persistence features rely on a local knowledge-base directory (any markdown notes folder works — Obsidian / Logseq / plain `.md` folders all supported).
+The watch-list scan and OKR metadata persistence features rely on a knowledge-base directory (any markdown notes folder works — Obsidian / Logseq / plain `.md` folders all supported). By default the skill reads local files first; if `vault.source: auto` and `vault.api.enabled: true` are configured, it can fall back to a vault API when the local vault is unavailable.
 
 If you don't have a suitable knowledge-base structure yet, use the companion template:
 

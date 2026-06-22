@@ -5,9 +5,19 @@
 ## 输入
 
 - `engine/02-analyze.md` 的输出结构
-- 当前 OKR 定义（优先级、KR 进度）
+- 当前 `🐶 重点OKR` 定义（优先级、KR 进度）
 - 用户感受（影响计划强度）
 - 当前模式（weekly / biweekly / quarterly）
+
+## 🐶 重点OKR约束
+
+下周 KR / 要务必须来自 Feishu Weekly 文档的 `🐶 重点OKR` 章节：
+
+- 不得为 `🐶 重点OKR` 中不存在的 Objective / KR 新建 KR。
+- 若 watch-list 或 todos 中有事项值得推进，只能挂到已有 KR 下；挂不上则放入
+  `[如有余力]`，并标注"非重点OKR"。
+- 如果 `🐶 重点OKR` 章节缺失或无法解析，停止生成计划，提示用户修正文档。
+- 输出中的 KR 名称应保留 Feishu 原文或稳定简称，方便写回表格后人工核对。
 
 ## 计划生成规则
 
@@ -77,6 +87,9 @@ P1 OKR → 每个最多 1 条要务
 初期（V1）：每条要务都基于用户提供的 retro 推导，AI 不凭空生成。
 成熟期（V2+）：AI 可根据历史执行模式预判下周要务，用户只需确认或调整。
 
+在本工作流中，V1/V2 都必须先满足 `🐶 重点OKR` 约束；历史模式只能决定同一 KR
+下的具体动作粒度和优先级，不能创造新的 KR。
+
 ### 规则 6：Phantom KR 自动剔除（仅有 metadata 时）
 
 见 `engine/02-analyze.md` 的 phantom_kr_warning 诊断。`status = phantom`
@@ -114,11 +127,11 @@ P1 OKR → 每个最多 1 条要务
 ```
 MIT 🔴：{要务描述}
 
-KR1（{OKR名称}）：
+KR1（{🐶 重点OKR中的OKR名称}）：
 1. {要务1}  MIT/—
 2. {要务2}
 
-KR2（{OKR名称}）：
+KR2（{🐶 重点OKR中的OKR名称}）：
 1. {要务}
 
 [如有余力]

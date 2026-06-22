@@ -2,6 +2,28 @@
 
 从 config.yaml 读取文档 token，按文档类型选择正确的读取方式。
 
+## 🐶 专属数据源要求
+
+weekly / biweekly 模式下，Feishu Weekly 文档是唯一权威输入源。读取结果必须包含：
+
+1. `okr_heading`：默认 `🐶 重点OKR`，也可由
+   `documents.weekly[].okr_heading` 覆盖。
+2. `table_block_id`：`🐶` 每周要务表格的 block id。该表格同时用于读取历史执行和写回下周计划。
+3. `table_marker`：默认 `config.user.symbol`，通常为 `🐶`。读取表格前必须校验表格标题、
+   邻近文本或首列中存在该 marker。
+4. 周列标题：默认由 `{MM.DD}-{MM.DD} {task_header_suffix}` 和
+   `{MM.DD}-{MM.DD} {retro_header_suffix}` 匹配，例如 `06.22-06.28 要务`
+   与 `06.22-06.28 retro`。
+
+如果任一项缺失，不进入分析阶段。输出 blocked 信息：
+
+```text
+无法继续 weekly review：没有确认到 🐶 每周要务数据源。
+- okr_heading: 是否存在 "🐶 重点OKR"
+- table_block_id: 是否指向 🐶 的表格
+- week columns: 是否存在最近 N 周的 "要务" / "retro" 列
+```
+
 ## 文档类型判断
 
 | 判断条件 | 文档类型 | 读取方式 |
@@ -26,15 +48,15 @@ import sys, json
 data = json.loads(sys.stdin.read())
 md = data['data']['markdown']
 lines = md.split('\n')
-# 只取 OKR 和 🐧 相关段落
+# 只取 🐶 重点OKR；表格内容必须再用 table_block_id 精确读取
 in_section = False
 output = []
 for line in lines:
-    if '# OKR' in line or '## OKR' in line:
+    if '🐶 重点OKR' in line:
         in_section = True
     if in_section:
         output.append(line)
-    if in_section and len(output) > 200:
+    if in_section and len(output) > 240:
         break
 print('\n'.join(output))
 "
@@ -82,8 +104,9 @@ for block in blocks:
 
 ### weekly 模式（lookback_weeks: 2）
 读取内容：
-1. 当前年份 Weekly 文档中的 OKR 定义段落（完整读取）
-2. 当前年份 Weekly 文档中最近 2 周的执行表格行（过滤 `user.symbol`）
+1. 当前年份 Weekly 文档中 `🐶 重点OKR` 章节（或 `okr_heading` 配置值）下的 OKR/KR。
+2. `table_block_id` 指向的 `🐶` 每周要务表格中最近 2 周的 `要务` + `retro` 列。
+3. 每周要务原文必须保留项目符号、完成状态（✅/⭕️/🚧/Doing-xx%）和 MIT 标记。
 
 ### biweekly 模式（lookback_weeks: 4）
 读取内容同 weekly，但扩展到最近 4 周执行数据。
@@ -99,12 +122,40 @@ for block in blocks:
 ## 过滤用户数据
 
 所有文档中，只处理包含 `config.user.symbol` 的行/区块，忽略其他角色。
+默认 `config.user.symbol = 🐶`。如果文档里同一年有多个用户表格，必须通过
+`table_block_id` 锁定 `🐶` 表格，而不是只靠全文 emoji 过滤。
 
 ```python
-# 示例：过滤 🐧 行
-user_symbol = '🐧'  # 从 config.yaml 读取
+# 示例：过滤 🐶 行
+user_symbol = '🐶'  # 从 config.yaml 读取
 relevant = [line for line in lines if user_symbol in line or in_user_section]
 ```
+
+## 🐶 表格读取规则
+
+1. 用 `table_block_id` 获取表格 block，读取 `cells`、`row_count`、`col_count`。
+2. 读取表格前后相邻 block 或表格首列文本，确认存在 `table_marker`。
+3. 解析表头行，找到最近 N 周的：
+   - `{MM.DD}-{MM.DD} 要务`
+   - `{MM.DD}-{MM.DD} retro`
+4. 对每个周列输出结构化数据：
+
+```json
+{
+  "week": "2026-06-22/2026-06-28",
+  "tasks": ["MIT 🔴: ...", "KR1: ... ✅", "KR2: ... ⭕️"],
+  "retro": ["..."],
+  "source": {
+    "doc_token": "...",
+    "table_block_id": "...",
+    "task_cell_id": "...",
+    "retro_cell_id": "..."
+  }
+}
+```
+
+5. 如果最近 N 周的表格列为空，仍然把空列作为事实记录；不得用用户口头 retro
+   反向填充 Feishu 要务。
 
 ## Deadline 自然语言抽取（仅 vault.enabled = true）
 
