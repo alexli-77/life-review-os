@@ -619,7 +619,7 @@ async function planRowWrites(weekly, table, column, items) {
 
   for (let row = 1; row < table.rowCount; row += 1) {
     const existing = existingValues[row] || '';
-    if (!existing.trim()) {
+    if (!hasMeaningfulCellContent(existing)) {
       if (grouped.has(row)) rows.push({ rowIndex: row, toWrite: grouped.get(row), skipped: [] });
       continue;
     }
@@ -660,8 +660,12 @@ function groupItemsByTargetRow(items, rowCount) {
 function cellContainsItem(cellText, itemText) {
   const cell = comparableText(cellText);
   const item = comparableText(itemText);
-  if (!item) return false;
+  if (!cell || !item) return false;
   return cell.includes(item) || item.includes(cell);
+}
+
+function hasMeaningfulCellContent(cellText) {
+  return Boolean(comparableText(cellText));
 }
 
 function comparableText(value) {
