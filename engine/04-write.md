@@ -68,7 +68,10 @@ lark-cli api POST "/open-apis/docx/v1/documents/{doc_token}/blocks/{header_cell_
 ## Step 4：写入要务内容（有序列表）
 
 每条要务写为一个有序列表项，格式保持 `🐶` 表格历史每周要务风格。
-MIT 用红色文字标注。每条 KR 前缀必须对应 `🐶 重点OKR` 中的 KR 或稳定简称。
+同一 OKR 行有多件事时，写为同一单元格内的多条有序列表，不得用 `/` 串成一条。
+写入前必须移除句首/句尾多余 `/`。
+MIT 样式沿用历史表格：任务标题后追加红色 `MIT` 和普通 `✅`。
+每条 KR 前缀必须对应 `🐶 重点OKR` 中的 KR 或稳定简称。
 写入时必须使用该要务对应的第一列 OKR 行的单元格：`cell = cells[row_index * col_count + task_col]`。
 同一 OKR 行下的多条要务可按顺序写入同一个单元格；不同 OKR 行不得合并到第一行。
 
@@ -87,7 +90,7 @@ lark-cli api POST "/open-apis/docx/v1/documents/{doc_token}/blocks/{cell_id}/chi
     "index": 0
   }'
 
-# 写入 MIT 要务（红色标注）
+# 写入 MIT 要务（历史风格：红色 MIT + ✅）
 lark-cli api POST "/open-apis/docx/v1/documents/{doc_token}/blocks/{cell_id}/children" \
   --as user \
   --data '{
@@ -95,8 +98,9 @@ lark-cli api POST "/open-apis/docx/v1/documents/{doc_token}/blocks/{cell_id}/chi
       "block_type": 13,
       "ordered": {
         "elements": [
-          {"text_run": {"content": "MIT: 要务内容"}},
-          {"text_run": {"content": " 🔴", "text_element_style": {"text_color": 1}}}
+          {"text_run": {"content": "要务内容"}},
+          {"text_run": {"content": " MIT", "text_element_style": {"text_color": 1}}},
+          {"text_run": {"content": " ✅"}}
         ],
         "style": {}
       }
