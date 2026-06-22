@@ -48,11 +48,33 @@ keywords:
 9. `frameworks/{framework}.md` — 对应的分析框架（从 config.yaml 读取 framework 字段）
 10. `modes/{mode}.md` — 对应模式的具体行为规则
 
+## 🐶 Feishu Weekly 硬约束
+
+weekly / biweekly 模式必须以 Feishu Weekly 文档中的 **`🐶` 专属数据** 为唯一权威来源：
+
+1. **OKR 来源**：只读取当前 Weekly 文档中 `documents.weekly[].okr_heading`
+   指向的章节，默认标题为 `🐶 重点OKR`。下周 KR / 要务必须从该章节中的 KR 推导。
+2. **执行来源**：只读取 `documents.weekly[].table_block_id` 指向的 `🐶`
+   每周要务表格。review 必须基于最近 N 周的 `{日期范围} 要务` 和
+   `{日期范围} retro` 列，不得用对话输入或 vault/todos 替代 Feishu 表格内容。
+3. **表格校验**：读取和写回前，必须确认目标表格或其邻近标题/首列包含
+   `documents.weekly[].table_marker`（默认 `🐶`）。无法确认时停止执行，并提示用户更新
+   `table_block_id` 或文档结构。
+4. **辅助数据边界**：用户当次 retro、vault watch-list、metadata、todos 只能用于解释、
+   调整强度或补充候选；不能覆盖 Feishu 表格里的每周要务，也不能生成脱离
+   `🐶 重点OKR` 的 KR。
+5. **写回目标**：下周 KR / 要务只能写回同一个 `🐶` 表格的新一周 `{日期范围} 要务`
+   列；不得写到其他用户或其他 emoji 的表格。
+
+如果以上任一项无法满足，本次 review 必须进入 blocked 状态：说明缺失的信息、
+已经读到的内容、需要用户补齐的配置或 Feishu 文档结构。
+
 ## 标准执行流程
 
 ```
 Step 0: 读取 config.yaml
         → 确定 user.symbol、documents、framework、modes.{mode}
+        → 对 weekly 文档读取 okr_heading / table_block_id / table_marker
         ↓
 Step 0.5: Vault 检测（仅 vault.enabled=true 时）
         → vault.source=local/auto 且 vault.path 存在 → 继续本地读取
@@ -66,7 +88,7 @@ Step 1: 询问用户输入（如未在触发时提供）
         ↓
 Step 2: 读取飞书文档（按 engine/01-read.md）
         → 根据 mode 决定读取范围（lookback_weeks）
-        → weekly/biweekly：当前 OKR + 最近 N 周执行表格
+        → weekly/biweekly：🐶 重点OKR + 🐶 表格最近 N 周要务/retro
         → quarterly：使命宣言 + 五年计划 + 当年全量 OKR + 执行
         ↓
 Step 2.5: OKR Metadata 补全（按 engine/06-metadata.md，仅 vault.enabled=true 时）
@@ -82,7 +104,7 @@ Step 2.7: Todos 读取（按 engine/07-todos.md，仅 vault.enabled=true 且 vau
         → 文件全程只读，skill 不修改
         ↓
 Step 3: 分析（按 engine/02-analyze.md + frameworks/{framework}.md）
-        → 对比计划 vs 执行
+        → 对比 🐶 重点OKR vs 🐶 表格每周要务执行
         → 识别完成项 / 未完成项 / 偏移点
         → 结合用户 retro、感受、metadata（deadline / status）校正结论
         ↓
@@ -94,7 +116,7 @@ Step 3.5: 扫描 Watch List（按 engine/05-watch-list.md，仅 vault.enabled=tr
         → 被激活（status → active）的事项作为下周计划候选
         ↓
 Step 4: 生成下周计划（按 engine/03-plan.md）
-        → 每个 OKR 下的具体要务（DDL-aware MIT 选择）
+        → 只根据 🐶 重点OKR 生成每个 KR 下的具体要务（DDL-aware MIT 选择）
         → 标注 MIT（最多 1 个真正的 MIT）
         → 优先级排序
         ↓
@@ -102,6 +124,7 @@ Step 5: 输出分析摘要（在对话中展示）
         ↓
 Step 6: 写回飞书（按 engine/04-write.md）
         → 仅当 modes.{mode}.auto_write = true 时执行
+        → 写回同一个 🐶 表格的新一周要务列
         → quarterly 模式默认先在对话中确认，再写回
 ```
 

@@ -1,2 +1,13 @@
 config.yaml
+config.*.yaml
+!config.example.yaml
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.token
+tokens/
+secrets/
+.lark/
 .DS_Store

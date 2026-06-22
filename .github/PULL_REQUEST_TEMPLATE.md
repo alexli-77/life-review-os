@@ -67,6 +67,6 @@
 
 - [ ] 我读过 [CONTRIBUTING.md](../CONTRIBUTING.md)
 - [ ] commit message 符合项目风格（英文标题 + 中英正文 + 分点 + 动机）
-- [ ] 没有 commit `config.yaml` 或任何含 token / 个人信息的文件
+- [ ] 没有 commit `config.yaml`、`config.*.yaml`、`.env*`、key/token 文件或任何个人信息
 - [ ] 改动涉及 SKILL.md / engine 的核心逻辑时，我已经在对应 PR 描述里说明了对现有用户的影响
 - [ ] 如果新增了文档 / 示例，没有使用真实的飞书 token 或个人 OKR 数据

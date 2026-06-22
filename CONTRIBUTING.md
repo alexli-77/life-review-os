@@ -121,7 +121,7 @@ PR title 建议直接用主 commit message 的标题。
 - ❌ 把中文改成英文（除非是技术专有名词）—— 这个 skill 的目标用户是中文使用者
 - ❌ 把"飞书"改成"Feishu/Lark"全局替换 —— 中文语境就用"飞书"
 - ❌ 在 markdown 里加大量 HTML —— 保持纯 markdown 兼容性
-- ❌ 把 `config.yaml`（含真实 token）误推到仓库 —— 检查 `.gitignore`
+- ❌ 把 `config.yaml`、`config.*.yaml`、`.env*`、key/token 文件误推到仓库 —— 检查 `.gitignore`
 
 ---
 
@@ -140,7 +140,9 @@ PR title 建议直接用主 commit message 的标题。
 ## 关于敏感信息
 
 - **永远不要 commit `config.yaml`**（已在 `.gitignore` 中）
-- 不要在 issue / PR 中贴你的飞书 token、文档 token、`block_id`
+- **永远不要 commit `config.*.yaml`、`.env*`、`*.key`、`*.pem`、`*.token`**
+- 提交前运行 `git status --short`，确认没有真实配置、token、key、私密 vault 路径被 staged
+- 不要在 issue / PR 中贴你的飞书 token、文档 token、真实 `block_id`
 - 不要贴可识别个人的 OKR 内容
 - 示例和测试数据请用脱敏版本（参考 `config.example.yaml`）
 

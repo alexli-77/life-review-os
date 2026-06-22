@@ -4,7 +4,7 @@
 # ── 个人信息 ──────────────────────────────────────────────
 user:
   name: 你的名字               # 显示在分析报告中
-  symbol: 🐧                  # 飞书文档中标识你的 emoji，用于过滤你的行
+  symbol: 🐶                  # 飞书文档中标识你的 emoji，用于定位你的 OKR 和表格
   timezone: America/Toronto   # 你的时区（如 Asia/Shanghai）
 
 # ── 分析框架 ──────────────────────────────────────────────
@@ -23,7 +23,11 @@ documents:
   weekly:
     - year: 2026
       token: YOUR_2026_WEEKLY_TOKEN
-      table_block_id: YOUR_2026_TABLE_BLOCK_ID  # Q2/当前季度表格的 block_id，用于写回计划
+      table_block_id: YOUR_2026_DOG_WEEKLY_TABLE_BLOCK_ID  # 🐶 每周要务表格 block_id，用于读取和写回
+      okr_heading: "🐶 重点OKR"                    # 只从这个标题下读取当前重点 OKR / KR
+      table_marker: "🐶"                           # 读取/写回前必须校验目标表格属于该用户
+      task_header_suffix: "要务"                   # 周列标题形如 "06.22-06.28 要务"
+      retro_header_suffix: "retro"                 # 周复盘列标题形如 "06.22-06.28 retro"
     - year: 2025
       token: YOUR_2025_WEEKLY_TOKEN
     - year: 2024
