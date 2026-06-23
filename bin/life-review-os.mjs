@@ -137,8 +137,8 @@ async function writebackRun(runId) {
   let skippedCount = 0;
   for (const row of rowPlan.rows) {
     const cellId = finalTable.cellIds[row.rowIndex][taskColumn];
-    for (const item of row.toWrite) {
-      await postOrderedItem(weekly, cellId, item.text, item.is_mit);
+    for (const [itemIndex, item] of row.toWrite.entries()) {
+      await postOrderedItem(weekly, cellId, item.text, item.is_mit, itemIndex);
       writtenCount += 1;
     }
     skippedCount += row.skipped.length;
@@ -727,7 +727,7 @@ async function postText(weekly, cellId, content) {
   });
 }
 
-async function postOrderedItem(weekly, cellId, content, isMit) {
+async function postOrderedItem(weekly, cellId, content, isMit, position = 0) {
   await larkApi('POST', `/open-apis/docx/v1/documents/${weekly.token}/blocks/${cellId}/children`, {
     children: [
       {
@@ -744,7 +744,7 @@ async function postOrderedItem(weekly, cellId, content, isMit) {
         },
       },
     ],
-    index: 0,
+    index: position,
   });
 }
 
