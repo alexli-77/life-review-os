@@ -423,6 +423,9 @@ function buildWeeklyPrompt(input) {
     '{"writeback_plan":[{"row_index":1,"row_label":"第一列 OKR 原文或稳定简称","text":"要写入该行的下周要务","is_mit":false}]}',
     '```',
     'row_index 必须来自 Runtime Evidence 的 first_column_okr_rows；不确定归属的要务不要放进 writeback_plan。',
+    'writeback_plan 的每个对象只允许是一条 Feishu 有序列表项；同一 OKR 行有多条要务时，输出多个对象并使用相同 row_index。',
+    '不要在 text 里用 "/" 串联多个要务，也不要在 text 末尾保留 "/"。',
+    'MIT 项只设置 is_mit=true，text 里不要写 "MIT:"、"MIT 🔴" 或红点；写回时会按历史表格风格追加红色 MIT 和 ✅。',
   ].join('\n');
 }
 
@@ -547,12 +550,14 @@ function extractStructuredWritebackItems(draft) {
       const parsed = JSON.parse(block);
       const plan = Array.isArray(parsed?.writeback_plan) ? parsed.writeback_plan : Array.isArray(parsed) ? parsed : [];
       const items = plan
-        .map((item) => ({
-          text: String(item?.text || '').trim(),
-          heading: String(item?.row_label || item?.okr || '').trim(),
-          target_row: Number.isInteger(item?.row_index) ? item.row_index : null,
-          is_mit: Boolean(item?.is_mit),
-        }))
+        .flatMap((item) =>
+          splitWritebackItem({
+            text: String(item?.text || '').trim(),
+            heading: String(item?.row_label || item?.okr || '').trim(),
+            target_row: Number.isInteger(item?.row_index) ? item.row_index : null,
+            is_mit: Boolean(item?.is_mit),
+          }),
+        )
         .filter((item) => item.text);
       if (items.length) return items.slice(0, 10);
     } catch {
@@ -564,6 +569,46 @@ function extractStructuredWritebackItems(draft) {
 
 function validTargetRow(row, rows) {
   return Number.isInteger(row) && row > 0 && row < rows.length ? row : null;
+}
+
+function splitWritebackItem(item) {
+  const text = cleanWritebackText(item.text);
+  if (!text) return [];
+  const segments = text.split(/\s+\/\s+/).map(cleanWritebackText).filter(Boolean);
+  if (segments.length <= 1) return [{ ...item, text }];
+
+  const pieces = [];
+  let current = '';
+  for (const segment of segments) {
+    if (!current) {
+      current = segment;
+    } else if (looksLikeTaskStart(segment)) {
+      pieces.push(current);
+      current = segment;
+    } else {
+      current = `${current} / ${segment}`;
+    }
+  }
+  if (current) pieces.push(current);
+  return pieces.map((piece, index) => ({
+    ...item,
+    text: piece,
+    is_mit: Boolean(item.is_mit) && index === 0,
+  }));
+}
+
+function looksLikeTaskStart(value) {
+  return /^(?:MIT\b|OKR|跟进|联系|确认|完成|准备|整理|记录|处理|推进|发布|输出|阅读|战术|给父母|Leon|穿线|todo\b|被动收入|协助|建立|发送|写清|复核|检查|更新|列出|安排|固定|拍|补齐|列出|映射|同步|设计|实现|测试|修复|复盘)/i.test(value.trim());
+}
+
+function cleanWritebackText(value) {
+  return String(value)
+    .replace(/^\s*(?:MIT\s*){1,}🔴?\s*[:：]?\s*/i, '')
+    .replace(/\s*🔴\s*/g, ' ')
+    .replace(/^\s*\/+\s*/, '')
+    .replace(/\s*\/+\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function overlapScore(left, right) {
@@ -689,8 +734,12 @@ async function postOrderedItem(weekly, cellId, content, isMit) {
         block_type: 13,
         ordered: {
           elements: isMit
-            ? [{ text_run: { content: formatMitContent(content) } }, { text_run: { content: ' 🔴', text_element_style: { text_color: 1 } } }]
-            : [{ text_run: { content } }],
+            ? [
+                { text_run: { content: formatTaskContent(content) } },
+                { text_run: { content: ' MIT', text_element_style: { text_color: 1 } } },
+                { text_run: { content: ' ✅' } },
+              ]
+            : [{ text_run: { content: formatTaskContent(content) } }],
           style: {},
         },
       },
@@ -699,12 +748,8 @@ async function postOrderedItem(weekly, cellId, content, isMit) {
   });
 }
 
-function formatMitContent(content) {
-  const clean = String(content)
-    .replace(/^\s*(?:MIT\s*){1,}🔴?\s*[:：]?\s*/i, '')
-    .replace(/\s*🔴\s*/g, ' ')
-    .trim();
-  return `MIT: ${clean}`;
+function formatTaskContent(content) {
+  return cleanWritebackText(content);
 }
 
 function targetWeekDate(config, now) {
