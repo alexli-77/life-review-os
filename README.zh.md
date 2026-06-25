@@ -84,6 +84,17 @@ modes:
     auto_write: true
   quarterly:
     auto_write: false       # 季末报告先确认再写回
+
+planning:
+  workload_mode: normal     # conservative | normal | ambitious
+  weekly_task_budget:
+    mit: 1
+    p1: 4
+    p2: 3
+  min_total_items: 6
+  max_total_items: 10
+  min_okr_rows_touched: 4
+  hide_internal_reasoning: true
 ```
 
 > 飞书文档 token 在文档 URL 中：`https://xxx.feishu.cn/docx/[TOKEN]`
@@ -122,7 +133,8 @@ weekly / biweekly 模式严格依赖这两个位置：
 Step 1: skill 询问你的 retro 和本周感受
 Step 2: 读取 `🐶 重点OKR` + `🐶` 表格最近 N 周要务/retro
 Step 3: 对比分析（完成 / 未完成 / 偏移）
-Step 4: 生成下周计划（MIT + 6-8 条要务）
+Step 4: 按任务量预算生成下周计划
+        （默认：1 个 MIT，6-10 条写回要务，并映射到 OKR 行）
 Step 5: 在对话中输出分析摘要
 Step 6: 自动写回飞书表格新列（quarterly 模式需手动确认）
 ```

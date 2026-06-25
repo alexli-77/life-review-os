@@ -57,6 +57,22 @@ vault:
     auth_header: "Authorization: Bearer {token}"
     verify_tls: false
 
+# ── 下周任务量预算 ────────────────────────────────────────
+# 这些配置只影响 weekly / biweekly 的内部规划与写回候选，不会在最终卡片里展示。
+# Daily OS 传入的 Linear、todo inbox、vault daily 等上下文可以用于补足候选，
+# 但所有写回项仍必须能对应到 🐶 表格第一列的某个 OKR 行。
+planning:
+  workload_mode: normal                       # conservative | normal | ambitious
+  weekly_task_budget:
+    mit: 1                                    # 每周最多 1 个真正 MIT
+    p1: 4                                    # 目标 P1 数量，用于模型规划强度
+    p2: 3                                    # 目标 P2/补充数量，用于模型规划强度
+  min_total_items: 6                         # 下周要务少于该数时，优先从未闭环/上下文补足
+  max_total_items: 10                        # 超过该数时裁剪低价值候选
+  min_okr_rows_touched: 4                    # 尽量覆盖的 OKR 行数
+  carryover_policy: include_or_explain_internally
+  hide_internal_reasoning: true              # 卡片只显示结果，不展示来源/推理/预算
+
 # ── 模式规则 ──────────────────────────────────────────────
 modes:
   weekly:
