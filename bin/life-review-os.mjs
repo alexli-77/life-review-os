@@ -57,6 +57,7 @@ async function runWeekly(input) {
   const weekly = weeklyTarget(config, targetWeek.start);
   const table = await readWeeklyTable(weekly);
   validateTableMarker(table, weekly.marker);
+  const planningPolicy = buildPlanningPolicy(config, table.rows);
 
   const reviewTaskColumn = findHeader(table.headers, `${reviewWeek.label} ${weekly.taskHeaderSuffix}`);
   const reviewRetroColumn = findAdjacentRetro(table.headers, reviewTaskColumn, weekly.retroHeaderSuffix);
@@ -78,13 +79,14 @@ async function runWeekly(input) {
     mode: 'weekly',
     userText: input.userText,
     dailyOsInputPath: input.dailyOsInputPath,
+    planningPolicy,
     targetWeek,
     reviewWeek,
     reviewRows,
   });
-  const draft = input.provider === 'none' ? deterministicDraft(reviewWeek, targetWeek, reviewRows) : runProvider(input.provider, prompt);
+  const draft = input.provider === 'none' ? deterministicDraft(reviewWeek, targetWeek, reviewRows, planningPolicy) : runProvider(input.provider, prompt);
   const items = extractWritebackItems(draft);
-  const writebackItems = assignRows(items, table.rows);
+  const writebackItems = applyPlanningBudget(assignRows(items, table.rows), reviewRows, table.rows, planningPolicy);
   const run = {
     ok: true,
     run_id: crypto.randomUUID(),
@@ -97,6 +99,7 @@ async function runWeekly(input) {
       target_week: targetWeek.label,
       review_task_header: reviewTaskColumn >= 0 ? table.headers[reviewTaskColumn] : null,
       review_task_rows: reviewRows.map((row) => ({ row: row.row, okr: row.okr.slice(0, 160), tasks_preview: row.tasks.slice(0, 260), retro_preview: row.retro.slice(0, 180) })),
+      planning_policy: planningPolicy,
     },
     writeback: {
       doc_year: weekly.year,
@@ -166,7 +169,7 @@ function firstExistingPath(paths) {
 }
 
 function parseConfigYaml(text) {
-  const config = { user: {}, documents: { weekly: [] }, modes: {} };
+  const config = { user: {}, documents: { weekly: [] }, modes: {}, planning: {} };
   const lines = text.split('\n');
   let section = [];
   let currentWeekly = null;
@@ -201,6 +204,11 @@ function parseConfigYaml(text) {
     else if (section[0] === 'modes' && section[1]) {
       config.modes[section[1]] ||= {};
       config.modes[section[1]][key] = value;
+    } else if (section[0] === 'planning' && section[1] === 'weekly_task_budget') {
+      config.planning.weekly_task_budget ||= {};
+      config.planning.weekly_task_budget[key] = value;
+    } else if (section[0] === 'planning') {
+      config.planning[key] = value;
     }
   }
   return config;
@@ -212,6 +220,38 @@ function parseScalar(value) {
   if (trimmed === 'false') return false;
   if (/^\d+$/.test(trimmed)) return Number(trimmed);
   return trimmed.replace(/^['"]|['"]$/g, '');
+}
+
+function buildPlanningPolicy(config, tableRows) {
+  const mode = String(config.planning?.workload_mode || 'normal').toLowerCase();
+  const presets = {
+    light: { min_total_items: 4, max_total_items: 6, min_okr_rows_touched: 3, p1: 3, p2: 2 },
+    conservative: { min_total_items: 4, max_total_items: 6, min_okr_rows_touched: 3, p1: 3, p2: 2 },
+    normal: { min_total_items: 6, max_total_items: 10, min_okr_rows_touched: 4, p1: 4, p2: 3 },
+    ambitious: { min_total_items: 8, max_total_items: 12, min_okr_rows_touched: 5, p1: 6, p2: 4 },
+  };
+  const preset = presets[mode] || presets.normal;
+  const configuredBudget = config.planning?.weekly_task_budget || {};
+  const maxRows = Math.max(1, (tableRows || []).filter((row) => row.index > 0 && String(row.firstColumn || '').trim()).length);
+  const minItems = clampNumber(config.planning?.min_total_items, preset.min_total_items, 1, 20);
+  const maxItems = Math.max(minItems, clampNumber(config.planning?.max_total_items, preset.max_total_items, minItems, 24));
+  return {
+    workload_mode: mode in presets ? mode : 'normal',
+    mit: clampNumber(configuredBudget.mit, 1, 1, 1),
+    p1: clampNumber(configuredBudget.p1, preset.p1, 0, maxItems),
+    p2: clampNumber(configuredBudget.p2, preset.p2, 0, maxItems),
+    min_total_items: minItems,
+    max_total_items: maxItems,
+    min_okr_rows_touched: Math.min(maxRows, clampNumber(config.planning?.min_okr_rows_touched, preset.min_okr_rows_touched, 1, 20)),
+    carryover_policy: String(config.planning?.carryover_policy || 'include_or_explain_internally'),
+    hide_internal_reasoning: config.planning?.hide_internal_reasoning !== false,
+  };
+}
+
+function clampNumber(value, fallback, min, max) {
+  const number = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(number)));
 }
 
 function weeklyTarget(config, date) {
@@ -404,6 +444,7 @@ function buildWeeklyPrompt(input) {
       {
         review_week: input.reviewWeek.label,
         target_week: input.targetWeek.label,
+        planning_policy: input.planningPolicy,
         user_text: input.userText,
         first_column_okr_rows: input.reviewRows.slice(1).map((row) => ({ row_index: row.row, okr: row.okr })),
         weekly_rows: input.reviewRows,
@@ -413,11 +454,15 @@ function buildWeeklyPrompt(input) {
     ),
     '',
     '# Daily OS context',
+    '以下是 Daily OS 补充上下文，只能用于补充候选、校准任务量和识别实际投入；不能覆盖 Feishu 🐶 表格事实，也不能在最终用户可见输出中展示来源、证据名、row_index 或内部判断过程。',
     dailyOs,
     '',
     '# Output contract',
     `输出必须包含 "## 📊 上周执行对比（${input.reviewWeek.label}）" 和 "## 📋 下周计划（${input.targetWeek.label}）"。`,
     '下周计划里的每条要务必须对应或可追溯到第一列 🐶 重点OKR 的某一行。',
+    `下周写回计划必须符合 planning_policy：总数尽量在 ${input.planningPolicy.min_total_items}-${input.planningPolicy.max_total_items} 条之间，最多 ${input.planningPolicy.mit} 个 MIT，尽量覆盖至少 ${input.planningPolicy.min_okr_rows_touched} 个 OKR 行。`,
+    '如果 Feishu 上周未完成项不足以达到任务量，优先从 Daily OS context 中的 Linear、todo inbox、vault daily、recent daily memory 选择能挂到现有 OKR 行的候选；挂不上现有 OKR 行的事项不要进入 writeback_plan。',
+    '最终用户可见正文只输出结果，不要写“来源/依据/我参考了/内部预算/row_index/debug”等解释；如有取舍，只体现在最终任务安排中。',
     '最后必须附一个 fenced JSON 代码块，格式为：',
     '```json',
     '{"writeback_plan":[{"row_index":1,"row_label":"第一列 OKR 原文或稳定简称","text":"要写入该行的下周要务","is_mit":false}]}',
@@ -461,7 +506,7 @@ function runProvider(provider, prompt) {
   throw new Error(`Unsupported provider: ${provider}`);
 }
 
-function deterministicDraft(reviewWeek, targetWeek, rows) {
+function deterministicDraft(reviewWeek, targetWeek, rows, planningPolicy = buildPlanningPolicy({}, rows)) {
   const completed = [];
   const unfinished = [];
   const writebackPlan = [];
@@ -470,12 +515,12 @@ function deterministicDraft(reviewWeek, targetWeek, rows) {
       if (/[✅]/.test(item)) completed.push(item);
       else if (/[⭕️❌🚧]/.test(item)) {
         unfinished.push(item);
-        if (writebackPlan.length < 5) {
+        if (writebackPlan.length < planningPolicy.max_total_items) {
           writebackPlan.push({
             row_index: row.row,
             row_label: row.okr,
             text: item.replace(/[⭕️❌🚧]/g, '').trim() || item,
-            is_mit: writebackPlan.length === 0,
+            is_mit: writebackPlan.length === 0 && planningPolicy.mit > 0,
           });
         }
       }
@@ -541,6 +586,92 @@ function assignRows(items, rows) {
       match_score: item.target_row ? 999 : best?.score || 0,
     };
   });
+}
+
+function applyPlanningBudget(items, reviewRows, tableRows, policy) {
+  const maxItems = policy.max_total_items || 10;
+  const minItems = policy.min_total_items || 6;
+  const minRows = policy.min_okr_rows_touched || 1;
+  const validRows = new Set(tableRows.slice(1).filter((row) => String(row.firstColumn || '').trim()).map((row) => row.index));
+  const planned = [];
+  const seen = new Set();
+
+  const add = (item) => {
+    const row = typeof item.target_row === 'number' ? item.target_row : null;
+    if (!validRows.has(row)) return false;
+    const text = cleanWritebackText(item.text);
+    if (!text) return false;
+    const key = `${row}:${comparableText(text)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    planned.push({
+      ...item,
+      text,
+      target_row: row,
+      target_row_label: item.target_row_label || tableRows[row]?.firstColumn?.slice(0, 120) || '',
+      is_mit: Boolean(item.is_mit),
+    });
+    return true;
+  };
+
+  for (const item of items) {
+    if (planned.length >= maxItems) break;
+    add(item);
+  }
+
+  const carryovers = carryoverCandidates(reviewRows, tableRows);
+  const touched = () => new Set(planned.map((item) => item.target_row)).size;
+  for (const candidate of carryovers) {
+    if (planned.length >= maxItems || touched() >= minRows) break;
+    if (!planned.some((item) => item.target_row === candidate.target_row)) add(candidate);
+  }
+  for (const candidate of carryovers) {
+    if (planned.length >= maxItems || planned.length >= minItems) break;
+    add(candidate);
+  }
+
+  const mitIndex = planned.findIndex((item) => item.is_mit);
+  planned.forEach((item, index) => {
+    item.is_mit = index === (mitIndex >= 0 ? mitIndex : 0);
+  });
+  return planned.slice(0, maxItems);
+}
+
+function carryoverCandidates(reviewRows, tableRows) {
+  const out = [];
+  for (const row of reviewRows.slice(1)) {
+    if (!String(row.okr || '').trim()) continue;
+    for (const raw of splitItems(row.tasks)) {
+      if (!isCarryoverTask(raw)) continue;
+      const text = cleanCarryoverTask(raw);
+      if (!text) continue;
+      out.push({
+        text,
+        heading: row.okr,
+        is_mit: /MIT|🔴/i.test(raw),
+        target_row: row.row,
+        target_row_label: tableRows[row.row]?.firstColumn?.slice(0, 120) || row.okr.slice(0, 120),
+      });
+    }
+  }
+  return out;
+}
+
+function isCarryoverTask(value) {
+  const text = String(value);
+  if (!text.trim()) return false;
+  if (/[✅]/.test(text) && !/[⭕❌🚧]/.test(text)) return false;
+  return /[⭕❌🚧]|未完成|待完成|延续|follow[- ]?up|blocked|阻塞|继续|补齐|确认|完成|准备|整理|记录|推进|复盘|检查|更新|联系/.test(text);
+}
+
+function cleanCarryoverTask(value) {
+  return cleanWritebackText(
+    String(value)
+      .replace(/[⭕️⭕❌🚧✅]/g, '')
+      .replace(/（?延续上周[^）)]*[）)]?/g, '')
+      .replace(/\bDoing-\d+%/gi, '')
+      .trim(),
+  );
 }
 
 function extractStructuredWritebackItems(draft) {

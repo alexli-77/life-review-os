@@ -21,6 +21,39 @@
 
 ## 计划生成规则
 
+### 规则 0：先应用任务量预算
+
+生成下周计划前，先读取 `config.yaml` 的 `planning` 配置。
+
+默认策略：
+
+```yaml
+planning:
+  workload_mode: normal
+  weekly_task_budget:
+    mit: 1
+    p1: 4
+    p2: 3
+  min_total_items: 6
+  max_total_items: 10
+  min_okr_rows_touched: 4
+```
+
+任务量预算只影响内部候选池和写回计划，不在最终卡片里展示。
+
+- `conservative`：4-6 条，适合低精力/高外部压力周。
+- `normal`：6-10 条，默认强度。
+- `ambitious`：8-12 条，适合用户明确希望加量时。
+
+如果 Feishu 上周未闭环事项不足以达到 `min_total_items`：
+
+1. 先补充同一 OKR 行内的未闭环 carry-over。
+2. 再从 Daily OS 输入包中的 Linear、todo inbox、vault daily、recent daily memory
+   选择能挂到现有 `🐶 重点OKR` 行的候选。
+3. 挂不到现有 OKR 行的候选不得进入写回计划。
+
+最终用户可见输出只展示计划结果；不要展示来源、证据名、任务量预算、row_index 或内部推理。
+
 ### 规则 1：严格限制 MIT 数量
 
 **每周只能有 1 个 MIT**（Most Important Thing）。

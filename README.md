@@ -84,6 +84,17 @@ modes:
     auto_write: true
   quarterly:
     auto_write: false       # quarterly reports require manual confirmation before write-back
+
+planning:
+  workload_mode: normal     # conservative | normal | ambitious
+  weekly_task_budget:
+    mit: 1
+    p1: 4
+    p2: 3
+  min_total_items: 6
+  max_total_items: 10
+  min_okr_rows_touched: 4
+  hide_internal_reasoning: true
 ```
 
 > The Lark doc token is in the URL: `https://xxx.feishu.cn/docx/[TOKEN]`
@@ -122,7 +133,8 @@ You can also trigger via natural language: "do my weekly review" / "run a bi-wee
 Step 1: Skill asks for your retro and how this week felt
 Step 2: Reads `🐶 重点OKR` + latest N weeks of tasks/retro from the `🐶` table
 Step 3: Comparative analysis (completed / missed / drifted)
-Step 4: Generates next week's plan (MIT + 6-8 priority items)
+Step 4: Generates next week's plan using the configured workload budget
+        (default: 1 MIT, 6-10 write-back items mapped to OKR rows)
 Step 5: Outputs an analysis summary in the chat
 Step 6: Auto-writes a new column to the Lark table (quarterly mode requires manual confirmation)
 ```
