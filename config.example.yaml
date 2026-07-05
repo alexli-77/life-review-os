@@ -62,6 +62,9 @@ vault:
 # Daily OS 传入的 Linear、todo inbox、vault daily 等上下文可以用于补足候选，
 # 但所有写回项仍必须能对应到 🐶 表格第一列的某个 OKR 行。
 planning:
+  todo_cycle: weekly                          # weekly | biweekly：不带 mode 参数运行 `run` 时的默认周期；
+                                              # biweekly 会生成两周区间要务（如 7.6-7.19 要务），写回仍只占一列，retro 复盘上两周。
+                                              # 命令行显式传 `run biweekly` 会覆盖该默认值。
   workload_mode: normal                       # conservative | normal | ambitious
   weekly_task_budget:
     mit: 1                                    # 每周最多 1 个真正 MIT
