@@ -26,9 +26,8 @@ async function main() {
     return;
   }
   if (command === 'run') {
-    const mode = modeOrArg || 'weekly';
-    if (mode !== 'weekly') throw new Error(`Only weekly mode is implemented in the CLI bridge, got: ${mode}`);
-    const result = await runWeekly({
+    const result = await runCycle({
+      mode: modeArgProvided() ? modeOrArg : '',
       provider: flagValue('--provider') || 'claude',
       userText: flagValue('--user-text') || '',
       dailyOsInputPath: flagValue('--daily-os-input') || '',
@@ -54,11 +53,12 @@ async function main() {
   throw new Error(`Unknown command: ${command}`);
 }
 
-async function runWeekly(input) {
+async function runCycle(input) {
   const config = loadConfig();
+  const cycle = resolveCycle(config, input.mode);
   const now = new Date();
-  const targetWeek = weekRange(targetWeekDate(config, now));
-  const reviewWeek = previousWeek(targetWeek.start);
+  const targetWeek = cycleRange(targetWeekDate(config, now), cycle);
+  const reviewWeek = previousCycle(targetWeek.start, cycle);
   const weekly = weeklyTarget(config, targetWeek.start);
   const table = await readWeeklyTable(weekly);
   validateTableMarker(table, weekly.marker);
@@ -90,7 +90,7 @@ async function runWeekly(input) {
   const prompt = buildWeeklyPrompt({
     config,
     weekly,
-    mode: 'weekly',
+    mode: cycle,
     userText: input.userText,
     dailyOsInputPath: input.dailyOsInputPath,
     planningPolicy,
@@ -108,7 +108,7 @@ async function runWeekly(input) {
     ok: true,
     run_id: crypto.randomUUID(),
     created_at: new Date().toISOString(),
-    mode: 'weekly',
+    mode: cycle,
     provider: input.provider,
     draft,
     evidence: {
@@ -545,6 +545,13 @@ function buildWeeklyPrompt(input) {
     '',
     '请严格按 Life Review OS 规则输出中文 weekly review 草稿。不要写回飞书；写回由 CLI 的 writeback 命令执行。',
     '必须使用下面的 Feishu 表格结构化数据作为权威事实，不要说表格为空，除非对应 rows 的 tasks 真的为空。',
+    ...(input.mode === 'biweekly'
+      ? [
+          `本次为双周（biweekly）模式：target_week（${input.targetWeek.label}）是一个两周区间，review_week（${input.reviewWeek.label}）是上两周。`,
+          '请规划覆盖未来两周的要务，一次性写入这一个两周区间列，不要拆成两列或两次计划。',
+          '复盘时按 modes/biweekly.md 增加双周趋势分析，识别周期性偏移；趋势章节只在草稿正文展示，不写入表格 retro 单元格。',
+        ]
+      : []),
     '',
     '# Skill',
     skill,
@@ -1154,20 +1161,35 @@ function targetWeekDate(config, now) {
   return day === 0 ? addDays(date, 1) : date;
 }
 
-function weekRange(date) {
+function cycleDays(cycle) {
+  return cycle === 'biweekly' ? 14 : 7;
+}
+
+function resolveCycle(config, mode) {
+  const requested = String(mode || config.planning?.todo_cycle || 'weekly').toLowerCase();
+  if (requested === 'weekly' || requested === 'biweekly') return requested;
+  throw new Error(`Unsupported todo cycle: ${requested}. Only weekly and biweekly are implemented in the CLI bridge.`);
+}
+
+function modeArgProvided() {
+  return positionalArgs().length >= 2;
+}
+
+function cycleRange(date, cycle = 'weekly') {
+  const span = cycleDays(cycle);
   const d = new Date(`${date}T00:00:00Z`);
   const day = d.getUTCDay();
   const monday = new Date(d);
   monday.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day));
-  const sunday = new Date(monday);
-  sunday.setUTCDate(monday.getUTCDate() + 6);
+  const end = new Date(monday);
+  end.setUTCDate(monday.getUTCDate() + span - 1);
   const start = monday.toISOString().slice(0, 10);
-  const end = sunday.toISOString().slice(0, 10);
-  return { start, end, label: `${monday.getUTCMonth() + 1}.${monday.getUTCDate()}-${sunday.getUTCMonth() + 1}.${sunday.getUTCDate()}` };
+  const endDate = end.toISOString().slice(0, 10);
+  return { start, end: endDate, label: `${monday.getUTCMonth() + 1}.${monday.getUTCDate()}-${end.getUTCMonth() + 1}.${end.getUTCDate()}` };
 }
 
-function previousWeek(start) {
-  return weekRange(addDays(start, -7));
+function previousCycle(start, cycle = 'weekly') {
+  return cycleRange(addDays(start, -cycleDays(cycle)), cycle);
 }
 
 function addDays(date, days) {
@@ -1224,7 +1246,7 @@ function printResult(result) {
 }
 
 function printHelp() {
-  console.log('Usage: life-review-os run weekly --json [--provider claude|codex|none]');
+  console.log('Usage: life-review-os run [weekly|biweekly] --json [--provider claude|codex|none]');
   console.log('       life-review-os preview --run-id <id> --json');
   console.log('       life-review-os writeback --run-id <id> --json');
   console.log('       life-review-os write-review --run-id <id> --json');
