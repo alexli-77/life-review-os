@@ -9,15 +9,20 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RUNS_DIR = path.join(ROOT, '.runs');
 
-main().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  if (hasFlag('--json')) {
-    console.log(JSON.stringify({ ok: false, error: redact(message) }, null, 2));
-  } else {
-    console.error(message);
-  }
-  process.exitCode = 1;
-});
+// Only run the CLI when executed directly; stay importable for tests.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    if (hasFlag('--json')) {
+      console.log(JSON.stringify({ ok: false, error: redact(message) }, null, 2));
+    } else {
+      console.error(message);
+    }
+    process.exitCode = 1;
+  });
+}
+
+export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml };
 
 async function main() {
   const [command = 'help', modeOrArg = 'weekly'] = positionalArgs();

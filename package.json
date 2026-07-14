@@ -1,0 +1,9 @@
+{
+  "name": "life-review-os",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Life Review OS skill CLI",
+  "scripts": {
+    "test": "node --test"
+  }
+}
