@@ -631,7 +631,7 @@ function runProvider(provider, prompt) {
       input: prompt,
       encoding: 'utf8',
       cwd: ROOT,
-      timeout: 180000,
+      timeout: 600000,
     });
     if (res.status !== 0) throw new Error(`Claude failed: ${(res.stderr || res.stdout).slice(0, 2000)}`);
     return res.stdout.trim();
@@ -642,7 +642,7 @@ function runProvider(provider, prompt) {
       input: prompt,
       encoding: 'utf8',
       cwd: ROOT,
-      timeout: 180000,
+      timeout: 600000,
     });
     const text = fs.existsSync(out) ? fs.readFileSync(out, 'utf8') : res.stdout;
     fs.rmSync(out, { force: true });
