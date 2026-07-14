@@ -84,5 +84,7 @@ modes:
   biweekly:
     lookback_weeks: 4
     auto_write: true
+    budget_multiplier: 2       # 双周任务量预算倍数：min/max_total_items 与 p1/p2 ×该值（默认 2）。
+                               # 只影响 biweekly；weekly 不变。MIT 每周期仍为 1。
   quarterly:
     auto_write: false          # 季末报告先在对话中确认，再写回

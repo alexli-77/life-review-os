@@ -62,7 +62,7 @@ async function runCycle(input) {
   const weekly = weeklyTarget(config, targetWeek.start);
   const table = await readWeeklyTable(weekly);
   validateTableMarker(table, weekly.marker);
-  const planningPolicy = buildPlanningPolicy(config, table.rows);
+  const planningPolicy = buildPlanningPolicy(config, table.rows, cycle);
 
   const reviewTaskColumn = findHeader(table.headers, `${reviewWeek.label} ${weekly.taskHeaderSuffix}`);
   const reviewRetroColumn = findAdjacentRetro(table.headers, reviewTaskColumn, weekly.retroHeaderSuffix);
@@ -303,7 +303,7 @@ function parseScalar(value) {
   return trimmed.replace(/^['"]|['"]$/g, '');
 }
 
-function buildPlanningPolicy(config, tableRows) {
+function buildPlanningPolicy(config, tableRows, cycle = 'weekly') {
   const mode = String(config.planning?.workload_mode || 'normal').toLowerCase();
   const presets = {
     light: { min_total_items: 4, max_total_items: 6, min_okr_rows_touched: 3, p1: 3, p2: 2 },
@@ -316,17 +316,29 @@ function buildPlanningPolicy(config, tableRows) {
   const maxRows = Math.max(1, (tableRows || []).filter((row) => row.index > 0 && String(row.firstColumn || '').trim()).length);
   const minItems = clampNumber(config.planning?.min_total_items, preset.min_total_items, 1, 20);
   const maxItems = Math.max(minItems, clampNumber(config.planning?.max_total_items, preset.max_total_items, minItems, 24));
+  const p1 = clampNumber(configuredBudget.p1, preset.p1, 0, maxItems);
+  const p2 = clampNumber(configuredBudget.p2, preset.p2, 0, maxItems);
+  // Biweekly plans cover two weeks, so scale the item budget (default 2x). MIT stays 1 per cycle.
+  const multiplier = cycle === 'biweekly' ? biweeklyBudgetMultiplier(config) : 1;
   return {
     workload_mode: mode in presets ? mode : 'normal',
+    cycle,
+    budget_multiplier: multiplier,
     mit: clampNumber(configuredBudget.mit, 1, 1, 1),
-    p1: clampNumber(configuredBudget.p1, preset.p1, 0, maxItems),
-    p2: clampNumber(configuredBudget.p2, preset.p2, 0, maxItems),
-    min_total_items: minItems,
-    max_total_items: maxItems,
+    p1: Math.round(p1 * multiplier),
+    p2: Math.round(p2 * multiplier),
+    min_total_items: Math.round(minItems * multiplier),
+    max_total_items: Math.round(maxItems * multiplier),
     min_okr_rows_touched: Math.min(maxRows, clampNumber(config.planning?.min_okr_rows_touched, preset.min_okr_rows_touched, 1, 20)),
     carryover_policy: String(config.planning?.carryover_policy || 'include_or_explain_internally'),
     hide_internal_reasoning: config.planning?.hide_internal_reasoning !== false,
   };
+}
+
+function biweeklyBudgetMultiplier(config) {
+  const raw = config.modes?.biweekly?.budget_multiplier;
+  const value = typeof raw === 'number' ? raw : Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : 2;
 }
 
 function clampNumber(value, fallback, min, max) {
