@@ -178,6 +178,24 @@ async function writebackRun(runId) {
     }
     skippedCount += row.skipped.length;
   }
+
+  // Mark OKR rows that received no plan this cycle, if a placeholder is configured.
+  const placeholder = cleanWritebackText(String(config.planning?.empty_row_placeholder || '').trim());
+  let placeholderCount = 0;
+  if (placeholder) {
+    const plannedRowSet = new Set(rowPlan.rows.map((row) => row.rowIndex));
+    const columnValues = await readColumn(weekly, finalTable, taskColumn);
+    for (const tableRow of finalTable.rows) {
+      const row = tableRow.index;
+      if (row < 1) continue; // skip header row
+      if (!String(tableRow.firstColumn || '').trim()) continue; // not a real OKR row
+      if (plannedRowSet.has(row)) continue; // already received tasks
+      if (hasMeaningfulCellContent(columnValues[row] || '')) continue; // cell already has content
+      await postOrderedItem(weekly, finalTable.cellIds[row][taskColumn], placeholder, false, 0);
+      placeholderCount += 1;
+    }
+  }
+
   return {
     ok: true,
     run_id: run.run_id,
@@ -187,6 +205,7 @@ async function writebackRun(runId) {
     task_header: targetHeader,
     item_count: writtenCount,
     skipped_count: skippedCount,
+    placeholder_count: placeholderCount,
   };
 }
 
@@ -337,6 +356,7 @@ function buildPlanningPolicy(config, tableRows, cycle = 'weekly') {
     min_okr_rows_touched: Math.min(maxRows, clampNumber(config.planning?.min_okr_rows_touched, preset.min_okr_rows_touched, 1, 20)),
     carryover_policy: String(config.planning?.carryover_policy || 'include_or_explain_internally'),
     hide_internal_reasoning: config.planning?.hide_internal_reasoning !== false,
+    empty_row_placeholder: config.planning?.empty_row_placeholder ? String(config.planning.empty_row_placeholder) : '',
   };
 }
 
