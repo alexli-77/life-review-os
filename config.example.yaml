@@ -73,6 +73,8 @@ planning:
   min_total_items: 6                         # 下周要务少于该数时，优先从未闭环/上下文补足
   max_total_items: 10                        # 超过该数时裁剪低价值候选
   min_okr_rows_touched: 4                    # 尽量覆盖的 OKR 行数
+  empty_row_placeholder:                     # 未排到任务的 OKR 行写入的提示语，例如 "本周期无安排"；
+                                             # 留空 / 省略则该行保持空白（默认行为，不写占位）。
   carryover_policy: include_or_explain_internally
   hide_internal_reasoning: true              # 卡片只显示结果，不展示来源/推理/预算
 
