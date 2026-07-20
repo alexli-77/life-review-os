@@ -22,7 +22,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   });
 }
 
-export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml };
+export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt };
 
 async function main() {
   const [command = 'help', modeOrArg = 'weekly'] = positionalArgs();
@@ -637,6 +637,22 @@ function buildWeeklyPrompt(input) {
     'writeback_plan 的每个对象只允许是一条 Feishu 有序列表项；同一 OKR 行有多条要务时，输出多个对象并使用相同 row_index。',
     '不要在 text 里用 "/" 串联多个要务，也不要在 text 末尾保留 "/"。',
     'MIT 项只设置 is_mit=true，text 里不要写 "MIT:"、"MIT 🔴" 或红点；写回时会按历史表格风格追加红色 MIT 和 ✅。',
+    ...(input.mode === 'biweekly'
+      ? [
+          '',
+          '# 双周 OKR 进度指标化输出（biweekly kr_progress）',
+          '本次是 biweekly 双周复盘，除上面 Feishu 写回的 retro_review/writeback_plan 块外，必须在正文最末尾再附加第二个独立 fenced JSON 代码块，用于把 KR 进度写回本地 OKR 文件（不写飞书）。规则：',
+          '- 三段式：每个 KR 的「数值进度」「障碍」「下周优先级」，用数值/计数指标而非纯叙述。',
+          '- `krId` 必须来自 Daily OS context 里「Local OKR Chain」段落解析出的本地 OKR 链（10_OKR 的 north-star / annual / current 三层，形如 O1-KR2）。不要发明不存在的 KR ID；无法从证据中确认进度的 KR 不要写进 kr_progress。',
+          '- `progress` 用百分比（可写 "55" 或 "55%"）；`current` 写该 KR 当前的真实计数/数值；`evidence` 写支撑该进度的证据来源（Linear、progress ledger、文档、IM 等）。',
+          '- 允许对每条进度标注 `confidence`（如 "high" / "0.7"），证据不足时用低置信度，而不是编造进度。',
+          '- 这个 kr_progress 块必须与上面的 writeback_plan 块分开，是最后一个独立 ```json 块，字段固定如下（数组可为空）：',
+          '```json',
+          '{"kr_progress":[{"krId":"O1-KR2","current":"6","progress":"55%","evidence":"Linear LEO-xxx 本双周关闭 3 个","confidence":"high"}],"obstacles":["……"],"next_priorities":["……"]}',
+          '```',
+          '- 如果 Local OKR Chain 段落为空或无法产出可信的结构化进度，就不要输出这个 kr_progress 块；系统会自动降级为纯叙述、不写回本地 OKR。',
+        ]
+      : []),
   ].join('\n');
 }
 
