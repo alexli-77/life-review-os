@@ -8,6 +8,7 @@ import {
   biweeklyBudgetMultiplier,
   buildPlanningPolicy,
   parseConfigYaml,
+  buildWeeklyPrompt,
 } from '../bin/life-review-os.mjs';
 
 // Fixture: header row + 5 OKR rows (indexes 1..5 non-empty).
@@ -111,6 +112,40 @@ test('buildPlanningPolicy: workload_mode preset is honored (conservative)', () =
   const p = buildPlanningPolicy({ planning: { workload_mode: 'conservative' } }, tableRows, 'weekly');
   assert.equal(p.min_total_items, 4);
   assert.equal(p.max_total_items, 6);
+});
+
+function promptInput(mode) {
+  return {
+    config: {},
+    weekly: {},
+    mode,
+    userText: '',
+    dailyOsInputPath: '',
+    planningPolicy: { min_total_items: 12, max_total_items: 20, mit: 1, min_okr_rows_touched: 3 },
+    targetWeek: { label: '7.7-7.20' },
+    reviewWeek: { label: '6.23-7.6' },
+    reviewRows: [
+      { row: 0, okr: 'OKR', tasks: '', retro: '' },
+      { row: 1, okr: 'O1 重点', tasks: '', retro: '' },
+    ],
+    targetRows: [{ row: 0, okr: 'OKR', tasks: '', retro: '' }],
+  };
+}
+
+test('buildWeeklyPrompt: biweekly injects the local-OKR kr_progress contract', () => {
+  const prompt = buildWeeklyPrompt(promptInput('biweekly'));
+  assert.match(prompt, /kr_progress/, 'biweekly prompt asks for a kr_progress block');
+  assert.match(prompt, /"krId":"O1-KR2"/, 'contract example uses a real-shaped krId');
+  assert.match(prompt, /next_priorities/, 'contract carries obstacles / next_priorities');
+  assert.match(prompt, /Local OKR Chain/, 'krId must come from the Daily OS Local OKR Chain section');
+  // The Feishu writeback_plan contract is still present and separate.
+  assert.match(prompt, /writeback_plan/, 'writeback_plan contract is untouched');
+});
+
+test('buildWeeklyPrompt: weekly mode does NOT emit the kr_progress contract', () => {
+  const prompt = buildWeeklyPrompt(promptInput('weekly'));
+  assert.ok(!/kr_progress/.test(prompt), 'weekly prompt stays kr_progress-free');
+  assert.match(prompt, /writeback_plan/, 'weekly still carries the Feishu writeback_plan contract');
 });
 
 test('parseConfigYaml -> resolveCycle/multiplier integration', () => {
