@@ -383,6 +383,9 @@ function weeklyTarget(config, date) {
     marker: selected.table_marker || config.user.symbol || '🐶',
     taskHeaderSuffix: selected.task_header_suffix || '要务',
     retroHeaderSuffix: selected.retro_header_suffix || 'retro',
+    // Optional: Linear workspace slug; when set, LEO-97-style ids in written
+    // items become clickable links to the corresponding Linear issue.
+    linearWorkspace: (config.linear && config.linear.workspace) || '',
   };
 }
 
@@ -1182,19 +1185,42 @@ async function postText(weekly, cellId, content, index = 0) {
   });
 }
 
+/**
+ * Split task text into Feishu text_run elements, turning Linear issue ids
+ * (LEO-97 style) into clickable links to the configured Linear workspace.
+ * Falls back to plain text when no workspace is configured.
+ */
+function taskTextElements(weekly, content) {
+  const text = formatTaskContent(content);
+  const workspace = weekly.linearWorkspace;
+  if (!workspace) return [{ text_run: { content: text } }];
+  const elements = [];
+  let cursor = 0;
+  for (const match of text.matchAll(/\b([A-Z][A-Z0-9]{1,9}-\d+)\b/g)) {
+    if (match.index > cursor) elements.push({ text_run: { content: text.slice(cursor, match.index) } });
+    elements.push({
+      text_run: {
+        content: match[1],
+        text_element_style: { link: { url: encodeURIComponent(`https://linear.app/${workspace}/issue/${match[1]}`) } },
+      },
+    });
+    cursor = match.index + match[1].length;
+  }
+  if (cursor < text.length) elements.push({ text_run: { content: text.slice(cursor) } });
+  return elements.length ? elements : [{ text_run: { content: text } }];
+}
+
 async function postOrderedItem(weekly, cellId, content, isMit, position = 0) {
   await larkApi('POST', `/open-apis/docx/v1/documents/${weekly.token}/blocks/${cellId}/children`, {
     children: [
       {
         block_type: 13,
         ordered: {
+          // Note: the MIT badge no longer appends a ✅ — writing a completion
+          // mark at plan time fabricated "done" evidence for later reviews.
           elements: isMit
-            ? [
-                { text_run: { content: formatTaskContent(content) } },
-                { text_run: { content: ' MIT', text_element_style: { text_color: 1 } } },
-                { text_run: { content: ' ✅' } },
-              ]
-            : [{ text_run: { content: formatTaskContent(content) } }],
+            ? [...taskTextElements(weekly, content), { text_run: { content: ' MIT', text_element_style: { text_color: 1 } } }]
+            : taskTextElements(weekly, content),
           style: {},
         },
       },

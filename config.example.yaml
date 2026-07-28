@@ -78,6 +78,12 @@ planning:
   carryover_policy: include_or_explain_internally
   hide_internal_reasoning: true              # 卡片只显示结果，不展示来源/推理/预算
 
+# ── Linear（可选）────────────────────────────────────────
+# 配置后，写回飞书的要务里出现的 issue 编号（如 LEO-97）会渲染为
+# 指向 https://linear.app/<workspace>/issue/<id> 的可点击链接。
+# linear:
+#   workspace: your-workspace-slug
+
 # ── 模式规则 ──────────────────────────────────────────────
 modes:
   weekly:
