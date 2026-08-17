@@ -22,7 +22,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   });
 }
 
-export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt };
+export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget };
 
 async function main() {
   const [command = 'help', modeOrArg = 'weekly'] = positionalArgs();
@@ -91,6 +91,7 @@ async function runCycle(input) {
     retro: targetRetroColumn >= 0 ? targetRetroValues[row.index] || '' : '',
   }));
   const layout = detectLayout(table.headers, weekly.retroHeaderSuffix, weekly.taskHeaderSuffix);
+  const linearCoverage = buildLinearCoverage(readLinearSnapshot(input.dailyOsInputPath), reviewRows, targetRows);
 
   const prompt = buildWeeklyPrompt({
     config,
@@ -103,10 +104,17 @@ async function runCycle(input) {
     reviewWeek,
     reviewRows,
     targetRows,
+    linearCoverage,
   });
   const draft = input.provider === 'none' ? deterministicDraft(reviewWeek, targetWeek, reviewRows, planningPolicy, targetRows) : runProvider(input.provider, prompt);
   const items = extractWritebackItems(draft);
-  const writebackItems = applyPlanningBudget(assignRows(items, table.rows), reviewRows, table.rows, planningPolicy);
+  const writebackItems = applyPlanningBudget(
+    assignRows(items, table.rows),
+    reviewRows,
+    table.rows,
+    planningPolicy,
+    new Set(linearCoverage.closed_issue_keys),
+  );
   const reviewText = extractReviewText(draft) || buildDeterministicRetroReview(targetRows, reviewRows);
   const reviewTargetRow = selectRetroReviewRow(targetRows);
   const run = {
@@ -125,6 +133,11 @@ async function runCycle(input) {
       review_task_rows: reviewRows.map((row) => ({ row: row.row, okr: row.okr.slice(0, 160), tasks_preview: row.tasks.slice(0, 260), retro_preview: row.retro.slice(0, 180) })),
       target_retro_rows: targetRows.map((row) => ({ row: row.row, okr: row.okr.slice(0, 160), tasks_preview: row.tasks.slice(0, 220), retro_preview: row.retro.slice(0, 260) })),
       planning_policy: planningPolicy,
+      linear_coverage: {
+        uncovered_active: linearCoverage.uncovered_active,
+        closed_in_table: linearCoverage.closed_in_table,
+        retired_from_plan: writebackItems.retired || [],
+      },
     },
     writeback: {
       doc_year: weekly.year,
@@ -624,6 +637,7 @@ function buildWeeklyPrompt(input) {
     '以下是 Daily OS 补充上下文，只能用于补充候选、校准任务量和识别实际投入；不能覆盖 Feishu 🐶 表格事实，也不能在最终用户可见输出中展示来源、证据名、row_index 或内部判断过程。',
     dailyOs,
     '',
+    ...linearCoverageSection(input.linearCoverage),
     '# Output contract',
     `输出必须包含 "## 📊 上周执行对比（${input.reviewWeek.label}）" 和 "## 📋 下周计划（${input.targetWeek.label}）"。`,
     '下周计划里的每条要务必须对应或可追溯到第一列 🐶 重点OKR 的某一行。',
@@ -657,6 +671,52 @@ function buildWeeklyPrompt(input) {
         ]
       : []),
   ].join('\n');
+}
+
+/**
+ * The planning rules tell the model to carry the previous column forward
+ * verbatim, so the previous column is the only seed a plan ever gets. These two
+ * pre-computed lists are what break that closed loop: work that started but was
+ * never written down, and work the table still claims is open after Linear
+ * closed it. Both are decided here in code — the model only has to act on them.
+ */
+function linearCoverageSection(coverage) {
+  const uncovered = coverage?.uncovered_active || [];
+  const closed = coverage?.closed_in_table || [];
+  if (uncovered.length === 0 && closed.length === 0) return [];
+  const describe = (issue) =>
+    `- ${issue.identifier}｜${issue.state_name || '-'}｜优先级 ${issue.priority || '-'}｜截止 ${issue.due_date || '无'}｜${issue.title}`;
+  return [
+    '# Linear 覆盖核对（必须逐条处理）',
+    '下面两份清单由程序比对 Linear 与 Feishu 要务列得出，不是建议，是必须回应的核对项。',
+    '',
+    ...(uncovered.length
+      ? [
+          '## 进行中但要务列没有的 issue',
+          '这些 issue 在 Linear 上已经开工（In Progress / In Review），但上期和本期要务列都没提到，说明它们从未进入计划。',
+          ...uncovered.map(describe),
+          '',
+          '处理规则：',
+          '- 逐条判断，二选一：纳入本期要务（写成一条可执行要务，末尾按 `(CUTTO-123)` 标注编号），或本期明确不做。',
+          '- 决定不做的，只在草稿正文用一句话说明原因，不要写进 writeback_plan。',
+          '- 挂不到任何第一列 OKR 行的，同样不进 writeback_plan。',
+          '- 不允许整份清单沉默跳过。',
+          '',
+        ]
+      : []),
+    ...(closed.length
+      ? [
+          '## 要务列还挂着、但 Linear 已经收尾的 issue',
+          ...closed.map(describe),
+          '',
+          '处理规则：',
+          '- 这些条目**不要**照搬进下一周期要务列，它们已经完成或取消。',
+          '- 复盘正文里应当把它们算作已完成，而不是继续当作未闭环事项。',
+          '- 如果确实还有后续工作，写成一条新的、描述后续动作的要务，不要复制原文。',
+          '',
+        ]
+      : []),
+  ];
 }
 
 function readText(relativePath) {
@@ -787,19 +847,29 @@ function assignRows(items, rows) {
   });
 }
 
-function applyPlanningBudget(items, reviewRows, tableRows, policy) {
+function applyPlanningBudget(items, reviewRows, tableRows, policy, closedIssueKeys = new Set()) {
   const maxItems = policy.max_total_items || 10;
   const minItems = policy.min_total_items || 6;
   const minRows = policy.min_okr_rows_touched || 1;
   const validRows = new Set(tableRows.slice(1).filter((row) => String(row.firstColumn || '').trim()).map((row) => row.index));
   const planned = [];
   const seen = new Set();
+  const retired = [];
 
   const add = (item) => {
     const row = typeof item.target_row === 'number' ? item.target_row : null;
     if (!validRows.has(row)) return false;
     const text = cleanWritebackText(item.text);
     if (!text) return false;
+    // Never carry a priority whose Linear issue is already closed. The planning
+    // rules tell the model to copy unfinished items forward verbatim, and the
+    // Feishu cell is only marked ✅ by hand — so without this a finished issue
+    // reappears in the new cycle every time the tick was missed.
+    const closedKey = referencesIssueKey(text, closedIssueKeys);
+    if (closedKey) {
+      retired.push({ text, issue: closedKey });
+      return false;
+    }
     const key = `${row}:${comparableText(text)}`;
     if (seen.has(key)) return false;
     seen.add(key);
@@ -833,7 +903,11 @@ function applyPlanningBudget(items, reviewRows, tableRows, policy) {
   planned.forEach((item, index) => {
     item.is_mit = index === (mitIndex >= 0 ? mitIndex : 0);
   });
-  return planned.slice(0, maxItems);
+  const result = planned.slice(0, maxItems);
+  // Surfaced on the returned array so the run record can report what was
+  // dropped — a silently shorter plan reads like the model just forgot it.
+  Object.defineProperty(result, 'retired', { value: retired, enumerable: false });
+  return result;
 }
 
 function buildDeterministicRetroReview(targetRows = [], reviewRows = []) {
@@ -940,6 +1014,88 @@ function clipReviewText(value) {
   let text = clipped.join('\n\n').trim();
   if (text.length > 350) text = `${clipAtBoundary(clipped[0], 150)}\n\n${clipAtBoundary(clipped[1] || '', 198)}`.trim();
   return text;
+}
+
+const ISSUE_KEY_PATTERN = /\b[A-Z][A-Z0-9]*-\d+\b/g;
+
+/**
+ * Read the `## Linear Issue Snapshot` block that Daily OS puts near the top of
+ * its input pack. Daily OS keeps this block compact and high in the file on
+ * purpose: only the first 20k chars of the pack reach the provider, and the
+ * full Linear dump lands far past that cut.
+ */
+export function parseLinearSnapshot(packText) {
+  const afterHeading = String(packText || '').split('## Linear Issue Snapshot')[1];
+  if (!afterHeading) return [];
+  const body = afterHeading.split(/\n##\s/)[0];
+  const out = [];
+  for (const line of body.split('\n')) {
+    const parts = line.split('|').map((part) => part.trim());
+    if (parts.length < 6) continue;
+    if (!/^[A-Z][A-Z0-9]*-\d+$/.test(parts[0])) continue;
+    const clean = (value) => (value === '-' ? '' : value);
+    out.push({
+      identifier: parts[0],
+      state_name: clean(parts[1]),
+      state_type: clean(parts[2]),
+      priority: clean(parts[3]),
+      due_date: clean(parts[4]),
+      title: parts.slice(5).join(' | '),
+    });
+  }
+  return out;
+}
+
+function readLinearSnapshot(dailyOsInputPath) {
+  if (!dailyOsInputPath || !fs.existsSync(dailyOsInputPath)) return [];
+  try {
+    return parseLinearSnapshot(fs.readFileSync(dailyOsInputPath, 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Cross-reference the Linear snapshot against what the Feishu table already
+ * tracks, producing the two lists the planner could never derive on its own:
+ *
+ * - `uncovered_active`: issues actively being worked that no priority column
+ *   mentions. Without this the plan is seeded purely by carrying the previous
+ *   column forward, so newly started work can never enter the cycle.
+ * - `closed_in_table`: issues a priority row still carries even though Linear
+ *   has them Done/Canceled. Feishu's own ✅ marks miss these whenever the cell
+ *   was never ticked by hand.
+ */
+export function buildLinearCoverage(snapshot = [], reviewRows = [], targetRows = []) {
+  const tracked = new Set();
+  for (const row of [...reviewRows, ...targetRows]) {
+    for (const key of String(row?.tasks || '').toUpperCase().match(ISSUE_KEY_PATTERN) || []) tracked.add(key);
+  }
+  const closedInTable = [];
+  const uncoveredActive = [];
+  for (const issue of snapshot) {
+    const key = String(issue.identifier || '').toUpperCase();
+    if (!key) continue;
+    const type = String(issue.state_type || '').toLowerCase();
+    if (type === 'completed' || type === 'canceled' || type === 'cancelled') {
+      if (tracked.has(key)) closedInTable.push(issue);
+    } else if (type === 'started' && !tracked.has(key)) {
+      uncoveredActive.push(issue);
+    }
+  }
+  return {
+    closed_issue_keys: closedInTable.map((issue) => String(issue.identifier).toUpperCase()),
+    closed_in_table: closedInTable,
+    uncovered_active: uncoveredActive,
+  };
+}
+
+function referencesIssueKey(text, keys) {
+  if (!keys || keys.size === 0) return '';
+  for (const key of String(text || '').toUpperCase().match(ISSUE_KEY_PATTERN) || []) {
+    if (keys.has(key)) return key;
+  }
+  return '';
 }
 
 function carryoverCandidates(reviewRows, tableRows) {

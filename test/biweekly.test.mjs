@@ -9,6 +9,9 @@ import {
   buildPlanningPolicy,
   parseConfigYaml,
   buildWeeklyPrompt,
+  applyPlanningBudget,
+  parseLinearSnapshot,
+  buildLinearCoverage,
 } from '../bin/life-review-os.mjs';
 
 // Fixture: header row + 5 OKR rows (indexes 1..5 non-empty).
@@ -155,4 +158,94 @@ test('parseConfigYaml -> resolveCycle/multiplier integration', () => {
   assert.equal(config.modes.biweekly.budget_multiplier, 3);
   assert.equal(resolveCycle(config, ''), 'biweekly');
   assert.equal(biweeklyBudgetMultiplier(config), 3);
+});
+
+// --- Linear coverage cross-check -------------------------------------------
+
+const SNAPSHOT_PACK = [
+  '# Daily OS Skill Input Pack',
+  '',
+  '## Linear Issue Snapshot',
+  'Linear 当前活跃 issue 快照，供计划环节做「未覆盖」与「已完成核销」核对。',
+  '每行格式：`编号 | 状态 | 状态类型 | 优先级 | 截止 | 标题`。',
+  'CUTTO-942 | In Progress | started | Medium | 2026-08-18 | 封面 Figma 模板（16:9 / 4:3 / 9:16，含安全区）',
+  'CUTTO-777 | In Review | started | High | 2026-08-05 | PRD & Demo',
+  'CUTTO-321 | Todo | unstarted | Medium | - | Asset 重改逻辑',
+  'CUTTO-301 | Done | completed | Medium | 2026-07-31 | 视频制作',
+  'CUTTO-999 | Canceled | canceled | Low | - | 废弃需求',
+  '',
+  '## Latest Workflow',
+  '(none)',
+].join('\n');
+
+test('parseLinearSnapshot reads the compact block and ignores prose lines', () => {
+  const snapshot = parseLinearSnapshot(SNAPSHOT_PACK);
+  assert.deepEqual(snapshot.map((issue) => issue.identifier), ['CUTTO-942', 'CUTTO-777', 'CUTTO-321', 'CUTTO-301', 'CUTTO-999']);
+  assert.equal(snapshot[0].state_type, 'started');
+  assert.equal(snapshot[0].due_date, '2026-08-18');
+  assert.equal(snapshot[2].due_date, '', 'a "-" placeholder becomes empty, not the literal dash');
+  assert.equal(snapshot[1].title, 'PRD & Demo');
+  assert.deepEqual(parseLinearSnapshot('no snapshot section here'), []);
+});
+
+test('buildLinearCoverage splits uncovered active work from closed-but-still-listed work', () => {
+  const reviewRows = [
+    { row: 0, okr: 'OKR', tasks: '' },
+    { row: 1, okr: 'O1', tasks: '完成 Montreal 视频 4K 终版（CUTTO-301） / 整理 PRD 与 Demo（CUTTO-777）' },
+  ];
+  const targetRows = [{ row: 0, okr: 'OKR', tasks: '' }];
+  const coverage = buildLinearCoverage(parseLinearSnapshot(SNAPSHOT_PACK), reviewRows, targetRows);
+
+  assert.deepEqual(coverage.uncovered_active.map((issue) => issue.identifier), ['CUTTO-942'], 'started + untracked only');
+  assert.deepEqual(coverage.closed_issue_keys, ['CUTTO-301'], 'closed AND still listed in the table');
+  assert.ok(
+    !coverage.uncovered_active.some((issue) => issue.identifier === 'CUTTO-321'),
+    'an unstarted issue is not "uncovered work" — it was never begun',
+  );
+  assert.ok(
+    !coverage.closed_issue_keys.includes('CUTTO-999'),
+    'a closed issue nobody tracked needs no retirement',
+  );
+});
+
+test('buildWeeklyPrompt renders both coverage lists with per-list handling rules', () => {
+  const input = promptInput('biweekly');
+  input.linearCoverage = buildLinearCoverage(
+    parseLinearSnapshot(SNAPSHOT_PACK),
+    [{ row: 1, okr: 'O1', tasks: '完成 Montreal 视频 4K 终版（CUTTO-301）' }],
+    [],
+  );
+  const prompt = buildWeeklyPrompt(input);
+  assert.match(prompt, /# Linear 覆盖核对（必须逐条处理）/);
+  assert.match(prompt, /CUTTO-942/, 'uncovered active issue is listed');
+  assert.match(prompt, /CUTTO-301/, 'closed-but-listed issue is listed');
+  assert.match(prompt, /纳入本期要务/, 'uncovered list carries the include-or-decline rule');
+  assert.match(prompt, /不要\*\*照搬进下一周期/, 'closed list carries the do-not-carry rule');
+
+  // No findings -> no section at all, so a clean cycle costs no prompt budget.
+  // Match the injected heading specifically: engine/03-plan.md documents the
+  // same rule by name and is embedded in every prompt.
+  const clean = promptInput('biweekly');
+  clean.linearCoverage = buildLinearCoverage([], [], []);
+  assert.ok(!/# Linear 覆盖核对（必须逐条处理）/.test(buildWeeklyPrompt(clean)));
+  assert.ok(!/CUTTO-942/.test(buildWeeklyPrompt(clean)), 'no issues leak into a clean prompt');
+});
+
+test('applyPlanningBudget retires a carried-over item whose Linear issue is closed', () => {
+  const tableRows = [
+    { index: 0, firstColumn: 'OKR' },
+    { index: 1, firstColumn: 'O1 Cutto' },
+  ];
+  const policy = { min_total_items: 1, max_total_items: 10, mit: 1, min_okr_rows_touched: 1 };
+  const items = [
+    { text: '完成 Montreal 视频 4K 终版（CUTTO-301）', target_row: 1, is_mit: false },
+    { text: '整理人物与大纲组件的 PRD 与 Demo（CUTTO-777）', target_row: 1, is_mit: false },
+  ];
+
+  const planned = applyPlanningBudget(items, [], tableRows, policy, new Set(['CUTTO-301']));
+  assert.deepEqual(planned.map((item) => item.text), ['整理人物与大纲组件的 PRD 与 Demo（CUTTO-777）']);
+  assert.deepEqual(planned.retired, [{ text: '完成 Montreal 视频 4K 终版（CUTTO-301）', issue: 'CUTTO-301' }]);
+
+  // Without the closed set nothing is dropped — the guard is opt-in per run.
+  assert.equal(applyPlanningBudget(items, [], tableRows, policy).length, 2);
 });
