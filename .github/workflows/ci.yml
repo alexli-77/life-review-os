@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: regression suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # No dependencies to install: package.json declares none, and the suite is
+      # pure node:test. It also runs without config.yaml (gitignored) — every
+      # case builds its own fixture rather than reading the local install.
+      - name: Regression suite
+        run: npm test
