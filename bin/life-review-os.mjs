@@ -22,7 +22,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   });
 }
 
-export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure };
+export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure, splitItems, carryoverCandidates, extractWritebackItems };
 
 async function main() {
   const [command = 'help', modeOrArg = 'weekly'] = positionalArgs();
@@ -448,11 +448,26 @@ async function readColumn(weekly, table, column) {
   return mapLimit(table.cellIds, 3, (row) => readCellText(weekly, row[column]));
 }
 
+/**
+ * One line per child block.
+ *
+ * This used to join with ' / ' and splitItems split back on the same string, a
+ * round-trip that is lossy for any item containing ' / ' itself. A priority
+ * reading "完成三条路径 yes/no 决策文档（PhD / AI 工程求职 / 过渡现金流…） ✅"
+ * came back as three fragments, so the text was truncated at the first slash
+ * AND its ✅ landed on a different fragment than its text — which is how a
+ * finished task got carried into the next cycle as an unfinished one.
+ *
+ * A newline cannot appear inside a chunk (whitespace is collapsed per chunk),
+ * so this delimiter round-trips exactly.
+ */
 async function readCellText(weekly, cellId) {
   const cell = await getBlock(weekly, cellId);
   const childBlocks = await mapLimit(cell.children || [], 3, (child) => getBlock(weekly, child));
-  const chunks = childBlocks.map((child) => textFromBlock(child));
-  return chunks.join(' / ').replace(/\s+/g, ' ').trim();
+  return childBlocks
+    .map((child) => textFromBlock(child).replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n');
 }
 
 async function getBlock(weekly, blockId) {
@@ -745,6 +760,7 @@ function readText(relativePath) {
   const filePath = path.join(ROOT, relativePath);
   return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
 }
+
 
 /**
  * A measured biweekly run takes ~9.5 minutes end to end, nearly all of it in
@@ -1213,7 +1229,12 @@ function extractStructuredWritebackItems(draft) {
           }),
         )
         .filter((item) => item.text);
-      if (items.length) return items.slice(0, 10);
+      // No slice here: this used to cap at 10 while a biweekly cycle's
+      // min_total_items is 12, so the model's own last items were dropped and
+      // the shortfall was refilled from the previous column — replacing fresh
+      // plan items with stale carry-over on every biweekly run.
+      // applyPlanningBudget applies the real per-cycle budget downstream.
+      if (items.length) return items;
     } catch {
       // Try the next JSON block.
     }
@@ -1495,9 +1516,17 @@ function addDays(date, days) {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Split cell text back into the items it was read from. ' / ' is deliberately
+ * NOT a delimiter here: readCellText emits one line per item, and treating a
+ * slash as a separator shreds any item that legitimately contains one
+ * ("（PhD / AI 工程求职 / 过渡现金流）"). Model-authored text that really does
+ * chain tasks with slashes is handled by splitWritebackItem, which checks that
+ * each segment looks like the start of a task before splitting.
+ */
 function splitItems(text) {
   return String(text)
-    .split(/\s+\/\s+|\n|;/)
+    .split(/\n|;/)
     .map((item) => item.trim())
     .filter(Boolean);
 }
