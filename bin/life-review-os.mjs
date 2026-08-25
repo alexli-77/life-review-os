@@ -22,7 +22,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   });
 }
 
-export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements };
+export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure };
 
 async function main() {
   const [command = 'help', modeOrArg = 'weekly'] = positionalArgs();
@@ -746,16 +746,54 @@ function readText(relativePath) {
   return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
 }
 
+/**
+ * A measured biweekly run takes ~9.5 minutes end to end, nearly all of it in
+ * the provider call. The old 10-minute ceiling left ~30s of headroom, so normal
+ * variance killed the child mid-draft — and because a SIGTERMed process writes
+ * nothing to either stream, the user got a bare "Claude failed:" with no cause.
+ */
+const PROVIDER_TIMEOUT_MS = Number(process.env.LIFE_REVIEW_OS_PROVIDER_TIMEOUT_MS || 1200000);
+
+/**
+ * Describe why a provider process failed.
+ *
+ * `(stderr || stdout).slice(...)` alone reports nothing for every failure that
+ * produces no output, which is most of them: a timeout kills the child with
+ * SIGTERM and leaves both streams empty, and a missing binary leaves them null
+ * (so .slice threw a TypeError over the real ENOENT). Both surfaced to the user
+ * as a bare "Claude failed:" with nothing after the colon.
+ */
+function describeProviderFailure(name, res) {
+  const output = `${res.stderr || ''}${res.stdout || ''}`.trim();
+  if (res.error?.code === 'ETIMEDOUT' || res.signal === 'SIGTERM') {
+    const seconds = Math.round(PROVIDER_TIMEOUT_MS / 1000);
+    return `${name} timed out after ${seconds}s (killed by ${res.signal || 'timeout'}). Raise LIFE_REVIEW_OS_PROVIDER_TIMEOUT_MS or shorten the prompt.${output ? ` Partial output: ${output.slice(0, 500)}` : ''}`;
+  }
+  if (res.error) {
+    const binary = name === 'Claude' ? process.env.CLAUDE_BIN || 'claude' : process.env.CODEX_BIN || 'codex';
+    if (res.error.code === 'ENOENT') return `${name} binary not found: ${binary}. Set ${name === 'Claude' ? 'CLAUDE_BIN' : 'CODEX_BIN'} to its full path.`;
+    return `${name} could not be started (${res.error.code || 'unknown'}): ${res.error.message}`;
+  }
+  if (res.signal) return `${name} was killed by ${res.signal}.${output ? ` Output: ${output.slice(0, 500)}` : ''}`;
+  if (!output) return `${name} exited with status ${res.status} and produced no output.`;
+  return `${name} exited with status ${res.status}: ${output.slice(0, 2000)}`;
+}
+
 function runProvider(provider, prompt) {
   if (provider === 'claude') {
     const res = spawnSync(process.env.CLAUDE_BIN || 'claude', ['-p', '--output-format', 'text', '--strict-mcp-config'], {
       input: prompt,
       encoding: 'utf8',
       cwd: ROOT,
-      timeout: 600000,
+      timeout: PROVIDER_TIMEOUT_MS,
+      maxBuffer: 64 * 1024 * 1024,
     });
-    if (res.status !== 0) throw new Error(`Claude failed: ${(res.stderr || res.stdout).slice(0, 2000)}`);
-    return res.stdout.trim();
+    if (res.status !== 0) throw new Error(describeProviderFailure('Claude', res));
+    // An exit status of 0 with empty output still breaks the caller, which
+    // expects a draft to parse; say so here rather than downstream.
+    const text = (res.stdout || '').trim();
+    if (!text) throw new Error('Claude exited successfully but returned an empty draft.');
+    return text;
   }
   if (provider === 'codex') {
     const out = path.join(os.tmpdir(), `life-review-os-${Date.now()}.md`);
@@ -763,11 +801,13 @@ function runProvider(provider, prompt) {
       input: prompt,
       encoding: 'utf8',
       cwd: ROOT,
-      timeout: 600000,
+      timeout: PROVIDER_TIMEOUT_MS,
+      maxBuffer: 64 * 1024 * 1024,
     });
-    const text = fs.existsSync(out) ? fs.readFileSync(out, 'utf8') : res.stdout;
+    const text = fs.existsSync(out) ? fs.readFileSync(out, 'utf8') : res.stdout || '';
     fs.rmSync(out, { force: true });
-    if (res.status !== 0) throw new Error(`Codex failed: ${(res.stderr || res.stdout).slice(0, 2000)}`);
+    if (res.status !== 0) throw new Error(describeProviderFailure('Codex', res));
+    if (!text.trim()) throw new Error('Codex exited successfully but returned an empty draft.');
     return text.trim();
   }
   throw new Error(`Unsupported provider: ${provider}`);
