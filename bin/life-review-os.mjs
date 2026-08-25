@@ -22,7 +22,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   });
 }
 
-export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget };
+export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements };
 
 async function main() {
   const [command = 'help', modeOrArg = 'weekly'] = positionalArgs();
@@ -286,8 +286,15 @@ function firstExistingPath(paths) {
   return paths.find((candidate) => fs.existsSync(candidate)) || paths[0];
 }
 
+/**
+ * Hand-rolled YAML subset. The section list below is a whitelist: a top-level
+ * block that is not named here is parsed and then silently dropped, so the
+ * feature reading it degrades to its "not configured" branch with no error.
+ * That is how `linear.workspace` sat in config.yaml for weeks while every
+ * written issue id stayed plain text. Add the section here when you add one.
+ */
 function parseConfigYaml(text) {
-  const config = { user: {}, documents: { weekly: [] }, modes: {}, planning: {} };
+  const config = { user: {}, documents: { weekly: [] }, modes: {}, planning: {}, linear: {}, vault: {} };
   const lines = text.split('\n');
   let section = [];
   let currentWeekly = null;
@@ -317,6 +324,14 @@ function parseConfigYaml(text) {
     if (!kv) continue;
     const [, key, rawValue] = kv;
     const value = parseScalar(rawValue);
+    // A top-level scalar (`framework: stephen-covey`) closes the previous
+    // block; without this it was filed under whichever section came before it.
+    if (indent === 0) {
+      config[key] = value;
+      section = [];
+      currentWeekly = null;
+      continue;
+    }
     if (section[0] === 'user') config.user[key] = value;
     else if (section[0] === 'documents' && section[1] === 'weekly' && currentWeekly) currentWeekly[key] = value;
     else if (section[0] === 'modes' && section[1]) {
@@ -327,6 +342,13 @@ function parseConfigYaml(text) {
       config.planning.weekly_task_budget[key] = value;
     } else if (section[0] === 'planning') {
       config.planning[key] = value;
+    } else if (section[0] === 'linear') {
+      config.linear[key] = value;
+    } else if (section[0] === 'vault' && section[1]) {
+      config.vault[section[1]] ||= {};
+      config.vault[section[1]][key] = value;
+    } else if (section[0] === 'vault') {
+      config.vault[key] = value;
     }
   }
   return config;
