@@ -22,7 +22,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   });
 }
 
-export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure, splitItems, carryoverCandidates, extractWritebackItems };
+export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure, splitItems, carryoverCandidates, extractWritebackItems, claudeArgs, skillConstraints };
 
 async function main() {
   const [command = 'help', modeOrArg = 'weekly'] = positionalArgs();
@@ -625,7 +625,7 @@ function compareMonthDay(left, right) {
 }
 
 function buildWeeklyPrompt(input) {
-  const skill = readText('SKILL.md');
+  const skill = skillConstraints();
   const engine02 = readText('engine/02-analyze.md');
   const engine03 = readText('engine/03-plan.md');
   const framework = readText(`frameworks/${input.config.framework || 'stephen-covey'}.md`);
@@ -761,6 +761,30 @@ function readText(relativePath) {
   return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
 }
 
+const SKILL_CONSTRAINTS_HEADING = '## 🐶 Feishu Weekly 硬约束';
+
+/**
+ * Only the hard constraints from SKILL.md belong in this prompt.
+ *
+ * SKILL.md is written for the interactive skill, where Claude reads the folder
+ * itself, asks the user questions and performs the write-back. This CLI already
+ * did all of that: the Feishu rows are in Runtime Evidence, write-back is a
+ * separate command, and there is nobody to answer a question. So the rest of
+ * the file is not merely dead weight — "执行前必读：按顺序读取以下文件" invites
+ * tool calls for content already inlined below it, the Step 0-6 flow describes
+ * write-back that this run is explicitly forbidden to do, and its 输出格式
+ * section contradicts the "# Output contract" further down the prompt.
+ *
+ * Falls back to the whole file if the heading is ever renamed: a prompt missing
+ * its constraints is worse than one carrying extra text.
+ */
+function skillConstraints() {
+  const text = readText('SKILL.md');
+  const start = text.indexOf(SKILL_CONSTRAINTS_HEADING);
+  if (start < 0) return text;
+  const end = text.indexOf('\n## ', start + SKILL_CONSTRAINTS_HEADING.length);
+  return (end < 0 ? text.slice(start) : text.slice(start, end)).trim();
+}
 
 /**
  * A measured biweekly run takes ~9.5 minutes end to end, nearly all of it in
@@ -795,9 +819,46 @@ function describeProviderFailure(name, res) {
   return `${name} exited with status ${res.status}: ${output.slice(0, 2000)}`;
 }
 
+/**
+ * Drafting is a pure text transformation: everything the model needs is already
+ * in the prompt, and it must not touch the filesystem or the network.
+ *
+ * Measured on one real biweekly prompt (49KB), where the whole run time is
+ * output-token generation — input is prefill and barely counts:
+ *
+ *   default                       9m27s   30,584 out   59,185 in
+ *   --effort low                  3m42s   13,288 out   59,185 in
+ *   + own system prompt/no tools  3m27s   12,326 out   45,970 in
+ *
+ * Thinking was the cost: 128KB of it against a 5KB answer. Effort is the lever;
+ * replacing the agent system prompt and dropping tool definitions removes ~13k
+ * tokens of scaffolding this task never uses. Both outputs were checked to
+ * still satisfy the plan contract (item budget, single MIT, OKR row coverage,
+ * both JSON blocks).
+ */
+const CLAUDE_EFFORT = process.env.LIFE_REVIEW_OS_CLAUDE_EFFORT || 'low';
+const DRAFTING_SYSTEM_PROMPT =
+  '你是一个严谨的复盘与计划助手。严格按用户消息里给出的规则输出中文草稿，不要调用任何工具，不要解释你的过程。';
+const DRAFTING_DISALLOWED_TOOLS = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'NotebookEdit', 'Task', 'TodoWrite'];
+
+function claudeArgs() {
+  return [
+    '-p',
+    '--output-format',
+    'text',
+    '--strict-mcp-config',
+    '--effort',
+    CLAUDE_EFFORT,
+    '--system-prompt',
+    DRAFTING_SYSTEM_PROMPT,
+    '--disallowed-tools',
+    ...DRAFTING_DISALLOWED_TOOLS,
+  ];
+}
+
 function runProvider(provider, prompt) {
   if (provider === 'claude') {
-    const res = spawnSync(process.env.CLAUDE_BIN || 'claude', ['-p', '--output-format', 'text', '--strict-mcp-config'], {
+    const res = spawnSync(process.env.CLAUDE_BIN || 'claude', claudeArgs(), {
       input: prompt,
       encoding: 'utf8',
       cwd: ROOT,
