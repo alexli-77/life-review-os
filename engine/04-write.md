@@ -109,20 +109,23 @@ lark-cli api POST "/open-apis/docx/v1/documents/{doc_token}/blocks/{cell_id}/chi
   }'
 ```
 
-## Step 4.5：写入目标周 retro review（可选）
+## Step 4.5：写入被复盘周期的 retro review（可选）
 
-当本次输出包含 `retro_review` 时，将它写入目标周 `{日期范围} 要务` 相邻的 `retro`
-单元格底部。若表头是双周范围（例如 `6.29-7.12 要务`）且覆盖当前目标周，也可以作为目标周。
+当本次输出包含 `retro_review` 时，将它写入**被复盘周期**（review week）`{日期范围} 要务`
+相邻的 `retro` 单元格底部。retro 记录的是一个已经结束的周期发生了什么，所以目的地是
+刚结束的那一列，不是正在规划的目标周那一列。
 
 写入规则：
 
-- 优先找目标周要务列左侧的 `retro`；左侧没有时，使用右侧相邻的 `retro`。
+- 按 layout 决定方向：`retro_before_task` 取左侧相邻的 `retro`，`task_before_retro` 取右侧；
+  该侧不是 retro 列时再退到另一侧。两侧通常都是 retro 列，取错侧会写进相邻周期。
 - review 写入同一 OKR 行的 retro 单元格，不得写到要务列，也不得默认写入第一行。
 - review 内容必须优先参考该 retro 单元格中已有的 `状态`、`做得好/做的好`、`待改进`，
   再参考相邻要务完成状态和 Daily OS 补充上下文。
 - review 控制在 350 个中文字符以内，只写复盘结论，不写来源说明、证据名或内部推理。
 - review 固定写成两段：第一段是肯定的总结，第二段是待改进的总结。
-- 写入为普通文本段落：先追加一行 `review`，再分别追加两段 review 正文。
+- 写入为普通文本段落：先追加一行 `🕙review`，再分别追加两段 review 正文。
+- 单元格里已经有 review 标题时（含手写的 `🕙review`）不重复插入标题，直接追加正文。
 
 ```bash
 lark-cli api POST "/open-apis/docx/v1/documents/{doc_token}/blocks/{retro_cell_id}/children" \
@@ -131,7 +134,7 @@ lark-cli api POST "/open-apis/docx/v1/documents/{doc_token}/blocks/{retro_cell_i
     "children": [{
       "block_type": 2,
       "text": {
-        "elements": [{"text_run": {"content": "review"}}],
+        "elements": [{"text_run": {"content": "🕙review"}}],
         "style": {}
       }
     }],

@@ -22,7 +22,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   });
 }
 
-export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure, splitItems, carryoverCandidates, extractWritebackItems, claudeArgs, skillConstraints, buildRunReview, selectRetroReviewRow };
+export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure, splitItems, carryoverCandidates, extractWritebackItems, claudeArgs, skillConstraints, buildRunReview, selectRetroReviewRow, findAdjacentRetro };
 
 async function main() {
   const [command = 'help', modeOrArg = 'weekly'] = positionalArgs();
@@ -149,10 +149,15 @@ async function runCycle(input) {
       items: writebackItems,
       ready: writebackItems.length > 0 && writebackItems.every((item) => typeof item.target_row === 'number'),
       review: buildRunReview({
+        // The review summarises the cycle that just ENDED, so it belongs in that
+        // cycle's retro cell — beside the review week's task column, not the
+        // target week's. See buildRunReview.
+        sourceTaskHeader: reviewTaskColumn >= 0 ? table.headers[reviewTaskColumn] : `${reviewWeek.label} ${weekly.taskHeaderSuffix}`,
         targetTaskHeader: targetTaskColumn >= 0 ? table.headers[targetTaskColumn] : targetTaskHeader,
         targetRetroHeader: targetRetroColumn >= 0 ? table.headers[targetRetroColumn] : null,
         targetRow: reviewTargetRow,
         text: reviewText,
+        layout,
       }),
     },
   };
@@ -236,9 +241,12 @@ async function writeReviewRun(runId) {
   const table = await readWeeklyTable(weekly);
   validateTableMarker(table, weekly.marker);
 
-  const taskColumn = findHeader(table.headers, review.target_task_header || run.writeback.task_header);
-  if (taskColumn < 0) throw new Error(`Could not locate target task header for review writeback: ${review.target_task_header || run.writeback.task_header}`);
-  const retroColumn = findAdjacentRetro(table.headers, taskColumn, weekly.retroHeaderSuffix);
+  // The retro belongs to the cycle that was reviewed. Older runs recorded only
+  // the target header, so fall back to it rather than refusing to write.
+  const sourceHeader = review.source_task_header || run.evidence?.review_task_header || review.target_task_header || run.writeback.task_header;
+  const taskColumn = findHeader(table.headers, sourceHeader);
+  if (taskColumn < 0) throw new Error(`Could not locate the reviewed cycle's task header for review writeback: ${sourceHeader}`);
+  const retroColumn = findAdjacentRetro(table.headers, taskColumn, weekly.retroHeaderSuffix, review.layout || run.writeback.layout);
   if (retroColumn < 0) {
     // Only reachable when write-back never created the pair, or the column was
     // renamed by hand — say which header we looked beside so it is actionable.
@@ -603,9 +611,16 @@ function findTaskHeaderForWeek(headers, label, week, taskSuffix) {
   });
 }
 
-function findAdjacentRetro(headers, taskColumn, retroSuffix) {
+/**
+ * Both neighbours of a task column are usually retro columns, so the side has
+ * to be chosen by layout rather than by "whichever matches first". Under
+ * `retro_before_task` a week's own retro sits to its left; picking the right
+ * neighbour there would land the summary in the NEXT week's retro.
+ */
+function findAdjacentRetro(headers, taskColumn, retroSuffix, layout = 'retro_before_task') {
   if (taskColumn < 0) return -1;
-  const candidates = [taskColumn - 1, taskColumn + 1].filter((index) => index >= 0 && index < headers.length);
+  const preferred = layout === 'task_before_retro' ? [taskColumn + 1, taskColumn - 1] : [taskColumn - 1, taskColumn + 1];
+  const candidates = preferred.filter((index) => index >= 0 && index < headers.length);
   return candidates.find((index) => headers[index].toLowerCase().includes(String(retroSuffix).toLowerCase())) ?? -1;
 }
 
@@ -697,7 +712,7 @@ function buildWeeklyPrompt(input) {
     '```json',
     '{"retro_review":"写入目标周要务左侧相邻 retro 单元格底部的 review，350字以内","writeback_plan":[{"row_index":1,"row_label":"第一列 OKR 原文或稳定简称","text":"要写入该行的下周要务","is_mit":false}]}',
     '```',
-    `retro_review 必须写给目标周 ${input.targetWeek.label} 的 retro；优先参考 target_week_rows 里同一 retro 单元格已有的状态、做得好、待改进，再参考相邻要务完成状态和 Daily OS context。`,
+    `retro_review 是对刚结束的 ${input.reviewWeek.label} 的复盘，会写进该周期的 retro 单元格（不是目标周 ${input.targetWeek.label} 的）；优先参考 weekly_rows 里同一 retro 单元格已有的状态、做得好、待改进，再参考同周要务完成状态和 Daily OS context。`,
     'retro_review 只写复盘结论，不要写来源说明；长度必须控制在 350 个中文字符以内，固定两段：第一段是肯定的总结，第二段是待改进的总结。',
     'row_index 必须来自 Runtime Evidence 的 first_column_okr_rows；不确定归属的要务不要放进 writeback_plan。',
     'writeback_plan 的每个对象只允许是一条 Feishu 有序列表项；同一 OKR 行有多条要务时，输出多个对象并使用相同 row_index。',
@@ -1122,11 +1137,17 @@ function summarizeTasks(text) {
  * row on its own, so the only thing that has to be settled here is the text.
  * The header/row values below are kept as hints for that later resolution.
  */
-function buildRunReview({ targetTaskHeader, targetRetroHeader, targetRow, text }) {
+function buildRunReview({ sourceTaskHeader, targetTaskHeader, targetRetroHeader, targetRow, text, layout }) {
   return {
+    // The retro cell to write into belongs to the cycle being REVIEWED, not the
+    // one being planned: a retro records what happened in a period that ended.
+    // Writing beside the target week put the summary of 8.10-8.23 into the
+    // still-empty 8.24-9.6 retro.
+    source_task_header: sourceTaskHeader,
     target_task_header: targetTaskHeader,
     target_retro_header: targetRetroHeader,
     target_row: targetRow,
+    layout,
     text,
     // Trimmed: whitespace-only would pass here and then fail deep inside
     // writeReviewRun with "Retro review text is empty".
@@ -1495,14 +1516,28 @@ function comparableText(value) {
     .toLowerCase();
 }
 
+/** Matches the section marker with or without a leading emoji (🕙review, 🧭 review, review). */
+const REVIEW_HEADING_PATTERN = /^\s*\p{Extended_Pictographic}*\s*review\s*$/iu;
+
+export const REVIEW_HEADING = '🕙review';
+
+/**
+ * Append the review to the BOTTOM of the retro cell, under a `🕙review` line.
+ *
+ * The heading carries the clock emoji to match the cell's other section markers
+ * (😄状态 / 👍🏻做的好 / 💪🏻待改进). Detection has to allow an emoji prefix too:
+ * the old pattern required `review` to start the line or follow whitespace, so
+ * a hand-written `🕙review` did not match and a second bare `review` heading
+ * was appended below it.
+ */
 async function appendReviewSection(weekly, cellId, reviewText) {
   const cell = await getBlock(weekly, cellId);
   const index = Array.isArray(cell.children) ? cell.children.length : 0;
   const childBlocks = await mapLimit(cell.children || [], 3, (child) => getBlock(weekly, child));
-  const hasReviewHeading = childBlocks.some((child) => /(?:^|\s)(?:🧭\s*)?review(?:\s|$)/i.test(textFromBlock(child)));
+  const hasReviewHeading = childBlocks.some((child) => REVIEW_HEADING_PATTERN.test(textFromBlock(child)));
   const paragraphs = reviewParagraphs(reviewText);
   if (!hasReviewHeading) {
-    await postText(weekly, cellId, 'review', index);
+    await postText(weekly, cellId, REVIEW_HEADING, index);
     for (const [offset, paragraph] of paragraphs.entries()) await postText(weekly, cellId, paragraph, index + 1 + offset);
     return;
   }
