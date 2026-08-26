@@ -69,3 +69,61 @@ test('an all-empty target column yields no row — write time resolves it instea
 test('row 0 is never chosen: it is the header row', () => {
   assert.equal(selectRetroReviewRow([{ row: 0, retro: '状态：x', tasks: 'y' }]), null);
 });
+
+/**
+ * Destination and heading, both reported from a real run.
+ *
+ * The table is `retro_before_task` and every task column has a retro column on
+ * BOTH sides, so "first neighbour that says retro" cannot pick a side:
+ *
+ *   col 1 retro | col 2 8.24-9.6 要务 | col 3 retro | col 4 8.10-8.23 要务
+ *
+ * The review summarises 8.10-8.23, so it belongs in col 3. Resolving from the
+ * TARGET week's column (2) landed it in col 1 — the still-empty retro of a
+ * cycle that has not happened yet.
+ */
+import { findAdjacentRetro, REVIEW_HEADING } from '../bin/life-review-os.mjs';
+
+const HEADERS = ['🐶 重点OKR', 'retro', '8.24-9.6 要务', 'retro', '8.10-8.23 要务', 'retro', '7.27-8.9 要务'];
+
+test('the reviewed cycle resolves to its own retro column, not the next one', () => {
+  assert.equal(findAdjacentRetro(HEADERS, 4, 'retro', 'retro_before_task'), 3, '8.10-8.23 要务 -> col 3');
+  assert.equal(findAdjacentRetro(HEADERS, 2, 'retro', 'retro_before_task'), 1, '8.24-9.6 要务 -> col 1');
+});
+
+test('layout picks the side; the wrong side is an adjacent cycle, not an error', () => {
+  assert.equal(findAdjacentRetro(HEADERS, 4, 'retro', 'task_before_retro'), 5);
+  assert.equal(findAdjacentRetro(HEADERS, 4, 'retro'), 3, 'defaults to retro_before_task');
+});
+
+test('it still falls back to the other side when the preferred one is not a retro', () => {
+  assert.equal(findAdjacentRetro(['🐶 重点OKR', '8.24-9.6 要务', 'retro'], 1, 'retro', 'retro_before_task'), 2);
+});
+
+test('the run records the reviewed cycle as the review destination', () => {
+  const review = buildRunReview({
+    sourceTaskHeader: '8.10-8.23 要务',
+    targetTaskHeader: '8.24-9.6 要务',
+    targetRetroHeader: 'retro',
+    targetRow: 1,
+    text: TEXT,
+    layout: 'retro_before_task',
+  });
+  assert.equal(review.source_task_header, '8.10-8.23 要务', 'destination is the cycle being reviewed');
+  assert.equal(review.target_task_header, '8.24-9.6 要务', 'the planned cycle is kept for context');
+  assert.equal(review.layout, 'retro_before_task');
+});
+
+test('the heading carries the clock emoji, matching the cell other markers', () => {
+  assert.equal(REVIEW_HEADING, '🕙review');
+});
+
+test('a hand-written 🕙review is recognised so no second heading is appended', () => {
+  const pattern = /^\s*\p{Extended_Pictographic}*\s*review\s*$/iu;
+  for (const existing of ['🕙review', '🕙 review', 'review', '🧭 review', 'Review']) {
+    assert.ok(pattern.test(existing), `must be recognised: ${existing}`);
+  }
+  for (const other of ['下周重点方向：', '💪🏻待改进', 'review the plan', '本双周 review 完成率']) {
+    assert.ok(!pattern.test(other), `must NOT be treated as the heading: ${other}`);
+  }
+});

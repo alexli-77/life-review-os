@@ -78,8 +78,9 @@ weekly / biweekly 模式必须以 Feishu Weekly 文档中的 **`🐶` 专属数�
 9. **Daily OS 补充上下文**：如果由 Daily OS 触发，Linear、todo inbox、vault daily、
    recent daily memory 只能用于补充候选和校准任务量；所有写回项仍必须映射到 `🐶` 表格第一列
    的某个 OKR 行。最终输出不要展示来源、证据名、row_index 或内部推理。
-10. **retro review 写回**：weekly / biweekly 模式可以在目标周 `{日期范围} 要务`
-    相邻的 `retro` 单元格底部写入 `review` 小节。review 必须优先参考同一 retro 单元格中
+10. **retro review 写回**：weekly / biweekly 模式可以在**被复盘周期**（刚结束的那一列）
+    `{日期范围} 要务` 相邻的 `retro` 单元格底部写入 `🕙review` 小节——retro 记录的是已结束
+    周期的复盘，不写进正在规划的目标周。review 必须优先参考同一 retro 单元格中
     已有的 `状态`、`做得好/做的好`、`待改进` 内容，再参考相邻要务完成状态和 Daily OS
     补充上下文。review 控制在 350 个中文字符以内，只写复盘结论，不写来源说明或内部推理。
     文本固定为两段：第一段是肯定的总结，第二段是待改进的总结。
