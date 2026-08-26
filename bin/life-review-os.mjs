@@ -22,7 +22,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   });
 }
 
-export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure, splitItems, carryoverCandidates, extractWritebackItems, claudeArgs, skillConstraints };
+export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure, splitItems, carryoverCandidates, extractWritebackItems, claudeArgs, skillConstraints, buildRunReview, selectRetroReviewRow };
 
 async function main() {
   const [command = 'help', modeOrArg = 'weekly'] = positionalArgs();
@@ -148,13 +148,12 @@ async function runCycle(input) {
       layout,
       items: writebackItems,
       ready: writebackItems.length > 0 && writebackItems.every((item) => typeof item.target_row === 'number'),
-      review: {
-        target_task_header: targetTaskColumn >= 0 ? table.headers[targetTaskColumn] : targetTaskHeader,
-        target_retro_header: targetRetroColumn >= 0 ? table.headers[targetRetroColumn] : null,
-        target_row: reviewTargetRow,
+      review: buildRunReview({
+        targetTaskHeader: targetTaskColumn >= 0 ? table.headers[targetTaskColumn] : targetTaskHeader,
+        targetRetroHeader: targetRetroColumn >= 0 ? table.headers[targetRetroColumn] : null,
+        targetRow: reviewTargetRow,
         text: reviewText,
-        ready: targetTaskColumn >= 0 && targetRetroColumn >= 0 && typeof reviewTargetRow === 'number' && Boolean(reviewText),
-      },
+      }),
     },
   };
   saveRun(run);
@@ -225,7 +224,13 @@ async function writebackRun(runId) {
 async function writeReviewRun(runId) {
   const run = loadRun(runId);
   const review = run.writeback?.review;
-  if (!review?.ready) throw new Error('Run is not ready for retro review writeback.');
+  // Gate on the text this call is about to write, not on the `ready` flag the
+  // run stored earlier. A stored flag is a snapshot of a different moment —
+  // trusting it is what blocked this command in the first place, and it would
+  // also strand every run recorded before that fix.
+  if (!String(review?.text || '').trim()) {
+    throw new Error('Run has no retro review text to write. Re-run the draft — the model did not return retro_review.');
+  }
   const config = loadConfig();
   const weekly = weeklyTarget(config, `${run.writeback.doc_year || new Date().getFullYear()}-01-01`);
   const table = await readWeeklyTable(weekly);
@@ -234,7 +239,14 @@ async function writeReviewRun(runId) {
   const taskColumn = findHeader(table.headers, review.target_task_header || run.writeback.task_header);
   if (taskColumn < 0) throw new Error(`Could not locate target task header for review writeback: ${review.target_task_header || run.writeback.task_header}`);
   const retroColumn = findAdjacentRetro(table.headers, taskColumn, weekly.retroHeaderSuffix);
-  if (retroColumn < 0) throw new Error(`Could not locate adjacent retro column for target task header: ${table.headers[taskColumn]}`);
+  if (retroColumn < 0) {
+    // Only reachable when write-back never created the pair, or the column was
+    // renamed by hand — say which header we looked beside so it is actionable.
+    throw new Error(
+      `Could not locate a "${weekly.retroHeaderSuffix}" column adjacent to "${table.headers[taskColumn]}". ` +
+        'Run writeback first (it creates the retro/task column pair), or fix the header in Feishu.',
+    );
+  }
 
   const retroValues = await readColumn(weekly, table, retroColumn);
   const taskValues = await readColumn(weekly, table, taskColumn);
@@ -1093,6 +1105,33 @@ function summarizeTasks(text) {
   const open = items.filter((item) => /⭕|❌|🚧|未完成|待/.test(item)).length;
   if (done || open) return `已完成 ${done} 项，仍有 ${open} 项需要继续推进`;
   return items[0] ? `主要围绕${clipSection(cleanCarryoverTask(items[0]) || items[0], 80)}` : '';
+}
+
+/**
+ * The retro-review payload stored on a run.
+ *
+ * `ready` is about the draft, not the table. At `run` time the target columns
+ * usually do NOT exist yet — that is exactly why the write-back action is
+ * `insert_columns` — so the old flag, which also required the task column, the
+ * adjacent retro column and a resolved row, was false for every new cycle. That
+ * made write-review refuse to run, and the review sat in the run record forever
+ * while the draft dutifully produced one each time.
+ *
+ * The columns are created by writebackRun. writeReviewRun then re-reads the
+ * table and resolves the task column, the adjacent retro column and the target
+ * row on its own, so the only thing that has to be settled here is the text.
+ * The header/row values below are kept as hints for that later resolution.
+ */
+function buildRunReview({ targetTaskHeader, targetRetroHeader, targetRow, text }) {
+  return {
+    target_task_header: targetTaskHeader,
+    target_retro_header: targetRetroHeader,
+    target_row: targetRow,
+    text,
+    // Trimmed: whitespace-only would pass here and then fail deep inside
+    // writeReviewRun with "Retro review text is empty".
+    ready: Boolean(String(text || '').trim()),
+  };
 }
 
 function selectRetroReviewRow(targetRows = []) {
