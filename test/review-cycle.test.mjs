@@ -103,3 +103,46 @@ test('empty and nullish input do not throw', () => {
   assert.equal(stripReviewWrapping(null), '');
   assert.equal(stripReviewWrapping(undefined), '');
 });
+
+// --- the CLI itself, as a subprocess -------------------------------------------
+//
+// Importing this module never calls main(), so every test above runs against a
+// fully evaluated module. The CLI does not: main() is async, an async function
+// runs synchronously up to its first `await`, and review-cycle builds its whole
+// prompt before awaiting anything. That combination read a `const` declared
+// further down the file and threw a TDZ ReferenceError on every invocation,
+// while all thirteen tests above passed. Only running the binary catches it.
+
+test('the review-cycle command runs far enough to reach the provider', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+
+  const cli = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'life-review-os.mjs');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'lros-cli-')), 'input.json');
+  fs.writeFileSync(file, JSON.stringify(INPUT), 'utf8');
+
+  // `none` is not a provider this command supports, which is the point: the
+  // prompt has to have been built for that message to be the one we get.
+  const result = spawnSync(process.execPath, [cli, 'review-cycle', '--input', file, '--provider', 'none', '--json'], { encoding: 'utf8' });
+  const payload = JSON.parse(result.stdout);
+
+  assert.equal(payload.ok, false);
+  assert.match(payload.error, /Unsupported provider/, payload.error);
+  assert.doesNotMatch(payload.error, /before initialization|is not defined|ReferenceError/, 'the module must be fully evaluated before main() runs');
+  fs.rmSync(path.dirname(file), { recursive: true, force: true });
+});
+
+test('the command reports a missing input file instead of crashing', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const cli = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'life-review-os.mjs');
+
+  const result = spawnSync(process.execPath, [cli, 'review-cycle', '--input', '/tmp/does-not-exist-xyz.json', '--json'], { encoding: 'utf8' });
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.match(payload.error, /ENOENT|no such file/i, payload.error);
+});
