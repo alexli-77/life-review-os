@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildCycleReviewPrompt, stripReviewWrapping, buildWeeklyPrompt, RETRO_REVIEW_STYLE } from '../bin/life-review-os.mjs';
+import { buildCycleReviewPrompt, stripReviewWrapping, buildWeeklyPrompt, RETRO_REVIEW_STYLE, retroReviewStyle } from '../bin/life-review-os.mjs';
 
 /**
  * `review-cycle` drafts the review for one already-finished cycle from content
@@ -35,9 +35,9 @@ test('the hand-written retro is presented as the authoritative account', () => {
   assert.match(prompt, /以用户手写的 retro 为事实基础/);
 });
 
-test('the style contract is the same object the weekly prompt uses', () => {
+test('the style contract is the same one the weekly prompt uses', () => {
   const cycle = buildCycleReviewPrompt(INPUT);
-  assert.ok(cycle.includes(RETRO_REVIEW_STYLE), 'review-cycle uses the shared contract');
+  assert.ok(cycle.includes(retroReviewStyle()), 'review-cycle uses the shared contract');
   const weekly = buildWeeklyPrompt({
     config: {}, weekly: {}, mode: 'biweekly', userText: '', dailyOsInputPath: '',
     planningPolicy: { min_total_items: 12, max_total_items: 20, mit: 1, min_okr_rows_touched: 3 },
@@ -45,9 +45,9 @@ test('the style contract is the same object the weekly prompt uses', () => {
     reviewRows: [{ row: 0, okr: 'OKR', tasks: '', retro: '' }],
     targetRows: [{ row: 0, okr: 'OKR', tasks: '', retro: '' }],
   });
-  assert.ok(weekly.includes(RETRO_REVIEW_STYLE), 'and so does the full weekly prompt');
-  assert.match(RETRO_REVIEW_STYLE, /350 个中文字符以内/);
-  assert.match(RETRO_REVIEW_STYLE, /固定两段/);
+  assert.ok(weekly.includes(retroReviewStyle()), 'and so does the full weekly prompt');
+  assert.match(retroReviewStyle(), /350 个中文字符以内/);
+  assert.match(retroReviewStyle(), /固定两段/);
 });
 
 test('the SKILL constraints and the analysis rules are both included', () => {
@@ -145,4 +145,60 @@ test('the command reports a missing input file instead of crashing', async () =>
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.ok, false);
   assert.match(payload.error, /ENOENT|no such file/i, payload.error);
+});
+
+// --- the editable contract file ------------------------------------------------
+
+test('the shipped file and the built-in fallback say the same thing', () => {
+  // If these ever drift, editing the file and deleting the file produce
+  // different reviews, and only one of them is the documented behaviour.
+  assert.equal(retroReviewStyle(), RETRO_REVIEW_STYLE);
+});
+
+test('only the text after the CONTRACT marker reaches the model', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', '08-retro-review.md');
+  const raw = fs.readFileSync(file, 'utf8');
+
+  assert.match(raw, /<!-- CONTRACT -->/, 'the file keeps its marker');
+  assert.ok(raw.includes('编辑注意'), 'the editing guidance is in the file');
+  assert.ok(!retroReviewStyle().includes('编辑注意'), 'but never in the prompt');
+  assert.ok(!buildCycleReviewPrompt(INPUT).includes('编辑注意'), 'nor in the built prompt');
+});
+
+test('a missing or emptied contract file falls back instead of dropping the rules', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', '08-retro-review.md');
+  const original = fs.readFileSync(file, 'utf8');
+  try {
+    // Emptied: someone selected all and deleted in the console editor.
+    fs.writeFileSync(file, '   \n\n', 'utf8');
+    assert.equal(retroReviewStyle(), RETRO_REVIEW_STYLE, 'an empty file must not mean "no length or shape contract"');
+
+    // Preamble kept, contract removed.
+    fs.writeFileSync(file, '# 说明\n随便写点什么\n\n<!-- CONTRACT -->\n\n', 'utf8');
+    assert.equal(retroReviewStyle(), RETRO_REVIEW_STYLE);
+
+    // Gone entirely.
+    fs.rmSync(file);
+    assert.equal(retroReviewStyle(), RETRO_REVIEW_STYLE);
+
+    // A real edit is honoured, and it is the only thing in the prompt.
+    fs.writeFileSync(file, '<!-- CONTRACT -->\nreview 写成一段，不超过 100 字。\n', 'utf8');
+    assert.equal(retroReviewStyle(), 'review 写成一段，不超过 100 字。');
+    assert.ok(buildCycleReviewPrompt(INPUT).includes('review 写成一段，不超过 100 字。'));
+    assert.ok(!buildCycleReviewPrompt(INPUT).includes(RETRO_REVIEW_STYLE), 'the edited contract replaces the default, not joins it');
+
+    // No marker at all: take the file whole rather than falling back, so a user
+    // who deleted the preamble still gets what they wrote.
+    fs.writeFileSync(file, '就写两句话。\n', 'utf8');
+    assert.equal(retroReviewStyle(), '就写两句话。');
+  } finally {
+    fs.writeFileSync(file, original, 'utf8');
+  }
+  assert.equal(retroReviewStyle(), RETRO_REVIEW_STYLE, 'the shipped file is restored');
 });

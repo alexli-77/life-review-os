@@ -10,7 +10,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RUNS_DIR = path.join(ROOT, '.runs');
 
 
-export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure, splitItems, carryoverCandidates, extractWritebackItems, claudeArgs, skillConstraints, buildRunReview, selectRetroReviewRow, findAdjacentRetro, buildCycleReviewPrompt, stripReviewWrapping, RETRO_REVIEW_STYLE };
+export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure, splitItems, carryoverCandidates, extractWritebackItems, claudeArgs, skillConstraints, buildRunReview, selectRetroReviewRow, findAdjacentRetro, buildCycleReviewPrompt, stripReviewWrapping, RETRO_REVIEW_STYLE, retroReviewStyle };
 
 async function main() {
   const [command = 'help', modeOrArg = 'weekly'] = positionalArgs();
@@ -652,9 +652,27 @@ function compareMonthDay(left, right) {
  * How a retro review reads. Shared by the full weekly prompt and the
  * review-cycle command so the two cannot drift into producing differently
  * shaped reviews for the same person.
+ *
+ * The text lives in engine/08-retro-review.md so it can be edited from Daily
+ * OS's Review Strategy page. This constant stays as the fallback: readText
+ * returns '' for a missing file, and silently dropping the length and shape
+ * contract would be a much worse failure than ignoring an edit.
  */
 const RETRO_REVIEW_STYLE =
   'retro_review 只写复盘结论，不要写来源说明；长度必须控制在 350 个中文字符以内，固定两段：第一段是肯定的总结，第二段是待改进的总结。';
+
+/**
+ * Everything after the `<!-- CONTRACT -->` marker is the instruction; anything
+ * before it is guidance for whoever is editing the file, and must not reach the
+ * model. A file with no marker is taken whole, so a user who deletes the
+ * preamble still gets what they wrote.
+ */
+function retroReviewStyle() {
+  const raw = readText('engine/08-retro-review.md');
+  const marker = raw.indexOf('<!-- CONTRACT -->');
+  const body = (marker >= 0 ? raw.slice(marker + '<!-- CONTRACT -->'.length) : raw).trim();
+  return body || RETRO_REVIEW_STYLE;
+}
 
 /**
  * Draft the review for one cycle, from content the caller already has.
@@ -693,7 +711,7 @@ function buildCycleReviewPrompt(input) {
     '',
     ...(String(input.context || '').trim() ? ['## 补充上下文', String(input.context).trim(), ''] : []),
     '# 输出要求',
-    RETRO_REVIEW_STYLE,
+    retroReviewStyle(),
     retro
       ? '以用户手写的 retro 为事实基础：不要与它矛盾，也不要重复抄写它，而是给出结论性的判断。'
       : '没有手写 retro 时，不要编造完成情况；把不确定的地方说成不确定。',
@@ -789,7 +807,7 @@ function buildWeeklyPrompt(input) {
     '{"retro_review":"写入目标周要务左侧相邻 retro 单元格底部的 review，350字以内","writeback_plan":[{"row_index":1,"row_label":"第一列 OKR 原文或稳定简称","text":"要写入该行的下周要务","is_mit":false}]}',
     '```',
     `retro_review 是对刚结束的 ${input.reviewWeek.label} 的复盘，会写进该周期的 retro 单元格（不是目标周 ${input.targetWeek.label} 的）；按此顺序参考：① Daily OS context 的「Local Cycle Retro」里 ${input.reviewWeek.label} 这一段（用户手写，最新）；② weekly_rows 里同一 retro 单元格已有的状态、做得好、待改进；③ 同周要务完成状态和其余 Daily OS context。①存在时不要因为②为空就当作用户没有复盘。`,
-    RETRO_REVIEW_STYLE,
+    retroReviewStyle(),
     'row_index 必须来自 Runtime Evidence 的 first_column_okr_rows；不确定归属的要务不要放进 writeback_plan。',
     'writeback_plan 的每个对象只允许是一条 Feishu 有序列表项；同一 OKR 行有多条要务时，输出多个对象并使用相同 row_index。',
     '不要在 text 里用 "/" 串联多个要务，也不要在 text 末尾保留 "/"。',
