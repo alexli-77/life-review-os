@@ -699,6 +699,11 @@ function buildWeeklyPrompt(input) {
     '',
     '# Daily OS context',
     '以下是 Daily OS 补充上下文，只能用于补充候选、校准任务量和识别实际投入；不能覆盖 Feishu 🐶 表格事实，也不能在最终用户可见输出中展示来源、证据名、row_index 或内部判断过程。',
+    // The one exception, and it has to be stated here or the line above cancels
+    // it: the user now writes their retro in Daily OS's own Cycles page, so for
+    // the retro specifically the local file is the newer copy and the Feishu
+    // cell is the stale one. Everything else about the table stays authoritative.
+    '唯一例外是「Local Cycle Retro」段落：用户手写的复盘现在记在 Daily OS 本地，飞书 retro 单元格可能为空或是旧稿。该段落里出现的周期，其 retro 以该段落为准。',
     dailyOs,
     '',
     ...linearCoverageSection(input.linearCoverage),
@@ -712,7 +717,7 @@ function buildWeeklyPrompt(input) {
     '```json',
     '{"retro_review":"写入目标周要务左侧相邻 retro 单元格底部的 review，350字以内","writeback_plan":[{"row_index":1,"row_label":"第一列 OKR 原文或稳定简称","text":"要写入该行的下周要务","is_mit":false}]}',
     '```',
-    `retro_review 是对刚结束的 ${input.reviewWeek.label} 的复盘，会写进该周期的 retro 单元格（不是目标周 ${input.targetWeek.label} 的）；优先参考 weekly_rows 里同一 retro 单元格已有的状态、做得好、待改进，再参考同周要务完成状态和 Daily OS context。`,
+    `retro_review 是对刚结束的 ${input.reviewWeek.label} 的复盘，会写进该周期的 retro 单元格（不是目标周 ${input.targetWeek.label} 的）；按此顺序参考：① Daily OS context 的「Local Cycle Retro」里 ${input.reviewWeek.label} 这一段（用户手写，最新）；② weekly_rows 里同一 retro 单元格已有的状态、做得好、待改进；③ 同周要务完成状态和其余 Daily OS context。①存在时不要因为②为空就当作用户没有复盘。`,
     'retro_review 只写复盘结论，不要写来源说明；长度必须控制在 350 个中文字符以内，固定两段：第一段是肯定的总结，第二段是待改进的总结。',
     'row_index 必须来自 Runtime Evidence 的 first_column_okr_rows；不确定归属的要务不要放进 writeback_plan。',
     'writeback_plan 的每个对象只允许是一条 Feishu 有序列表项；同一 OKR 行有多条要务时，输出多个对象并使用相同 row_index。',
