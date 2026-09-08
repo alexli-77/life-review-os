@@ -9,18 +9,6 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RUNS_DIR = path.join(ROOT, '.runs');
 
-// Only run the CLI when executed directly; stay importable for tests.
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch((error) => {
-    const message = error instanceof Error ? error.message : String(error);
-    if (hasFlag('--json')) {
-      console.log(JSON.stringify({ ok: false, error: redact(message) }, null, 2));
-    } else {
-      console.error(message);
-    }
-    process.exitCode = 1;
-  });
-}
 
 export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure, splitItems, carryoverCandidates, extractWritebackItems, claudeArgs, skillConstraints, buildRunReview, selectRetroReviewRow, findAdjacentRetro, buildCycleReviewPrompt, stripReviewWrapping, RETRO_REVIEW_STYLE };
 
@@ -1812,4 +1800,23 @@ function redact(value) {
     .replace(/\b(?:doccn|doxcn)[A-Za-z0-9_-]{8,}\b/g, '[redacted-doc-token]')
     .replace(/(documents\/)[A-Za-z0-9_-]+/g, '$1[redacted-doc-token]')
     .replace(/(blocks\/)[A-Za-z0-9_-]+/g, '$1[redacted-block-id]');
+}
+
+// Only run the CLI when executed directly; stay importable for tests.
+//
+// This has to be the last thing in the module, not the first. An async function
+// runs synchronously up to its first `await`, so invoking main() at the top made
+// every command that builds something before awaiting read a `const` declared
+// further down the file — a TDZ error, and one that no importing test can see,
+// because importing never calls main() at all.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    if (hasFlag('--json')) {
+      console.log(JSON.stringify({ ok: false, error: redact(message) }, null, 2));
+    } else {
+      console.error(message);
+    }
+    process.exitCode = 1;
+  });
 }
