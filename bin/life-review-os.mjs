@@ -22,7 +22,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   });
 }
 
-export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure, splitItems, carryoverCandidates, extractWritebackItems, claudeArgs, skillConstraints, buildRunReview, selectRetroReviewRow, findAdjacentRetro };
+export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure, splitItems, carryoverCandidates, extractWritebackItems, claudeArgs, skillConstraints, buildRunReview, selectRetroReviewRow, findAdjacentRetro, buildCycleReviewPrompt, stripReviewWrapping, RETRO_REVIEW_STYLE };
 
 async function main() {
   const [command = 'help', modeOrArg = 'weekly'] = positionalArgs();
@@ -52,6 +52,15 @@ async function main() {
   }
   if (command === 'write-review') {
     const result = await writeReviewRun(requiredFlag('--run-id'));
+    printResult(result);
+    return;
+  }
+  if (command === 'review-cycle') {
+    // The cycle's own text comes in through a file rather than argv: a retro is
+    // multi-line and can run to thousands of characters, which is not something
+    // to push through a shell argument.
+    const payload = JSON.parse(fs.readFileSync(requiredFlag('--input'), 'utf8'));
+    const result = await reviewCycle({ ...payload, provider: flagValue('--provider') || payload.provider || 'claude' });
     printResult(result);
     return;
   }
@@ -651,6 +660,80 @@ function compareMonthDay(left, right) {
   return left.month === right.month ? left.day - right.day : left.month - right.month;
 }
 
+/**
+ * How a retro review reads. Shared by the full weekly prompt and the
+ * review-cycle command so the two cannot drift into producing differently
+ * shaped reviews for the same person.
+ */
+const RETRO_REVIEW_STYLE =
+  'retro_review 只写复盘结论，不要写来源说明；长度必须控制在 350 个中文字符以内，固定两段：第一段是肯定的总结，第二段是待改进的总结。';
+
+/**
+ * Draft the review for one cycle, from content the caller already has.
+ *
+ * The full `run` command reviews a cycle it reads out of Feishu. Daily OS keeps
+ * the same three sections in a local cycle file and needs a review for one of
+ * them on demand, without re-planning anything and without a Feishu round trip.
+ * Same rules, same style contract, much smaller input — everything this needs
+ * arrives in `input`, so the command never reads the weekly document at all.
+ */
+function buildCycleReviewPrompt(input) {
+  const priorities = String(input.priorities || '').trim();
+  const retro = String(input.retro || '').trim();
+  return [
+    '# Life Review OS — 单周期 review',
+    '',
+    '为下面这一个已结束的周期写 retro review。只输出 review 正文本身，不要标题、不要前后说明、不要代码块。',
+    '',
+    '# Skill',
+    skillConstraints(),
+    '',
+    '# Analysis Rules',
+    readText('engine/02-analyze.md'),
+    '',
+    '# 周期',
+    'cycle: ' + String(input.cycle || '(未命名周期)'),
+    'mode: ' + String(input.mode || 'biweekly'),
+    '',
+    '## 该周期的要务（计划）',
+    priorities || '(这个周期没有记录要务)',
+    '',
+    '## 该周期的 retro（用户手写，权威）',
+    // The hand-written retro is the point of this command: it is the user's own
+    // account of the cycle, and it outranks anything inferred from the plan.
+    retro || '(用户还没写 retro；只能依据要务和补充上下文判断，并且不要假装知道执行结果)',
+    '',
+    ...(String(input.context || '').trim() ? ['## 补充上下文', String(input.context).trim(), ''] : []),
+    '# 输出要求',
+    RETRO_REVIEW_STYLE,
+    retro
+      ? '以用户手写的 retro 为事实基础：不要与它矛盾，也不要重复抄写它，而是给出结论性的判断。'
+      : '没有手写 retro 时，不要编造完成情况；把不确定的地方说成不确定。',
+    '直接输出 review 正文，不要写「review：」这样的前缀。',
+  ].join('\n');
+}
+
+async function reviewCycle(input) {
+  const provider = input.provider || 'claude';
+  const prompt = buildCycleReviewPrompt(input);
+  const raw = runProvider(provider, prompt);
+  const text = stripReviewWrapping(raw);
+  if (!text) throw new Error('Provider returned an empty review.');
+  return { ok: true, cycle: String(input.cycle || ''), mode: String(input.mode || ''), provider, review: { text, chars: text.length } };
+}
+
+/**
+ * Providers like to wrap prose in a fence or lead with a label even when told
+ * not to. Strip both rather than storing them into the user's cycle file.
+ */
+function stripReviewWrapping(value) {
+  return String(value || '')
+    .replace(/^\s*```[a-z]*\s*/i, '')
+    .replace(/\s*```\s*$/, '')
+    .replace(/^\s*(?:##+\s*)?(?:retro[ _-]?review|review|复盘)\s*[:：]\s*/i, '')
+    .trim();
+}
+
 function buildWeeklyPrompt(input) {
   const skill = skillConstraints();
   const engine02 = readText('engine/02-analyze.md');
@@ -718,7 +801,7 @@ function buildWeeklyPrompt(input) {
     '{"retro_review":"写入目标周要务左侧相邻 retro 单元格底部的 review，350字以内","writeback_plan":[{"row_index":1,"row_label":"第一列 OKR 原文或稳定简称","text":"要写入该行的下周要务","is_mit":false}]}',
     '```',
     `retro_review 是对刚结束的 ${input.reviewWeek.label} 的复盘，会写进该周期的 retro 单元格（不是目标周 ${input.targetWeek.label} 的）；按此顺序参考：① Daily OS context 的「Local Cycle Retro」里 ${input.reviewWeek.label} 这一段（用户手写，最新）；② weekly_rows 里同一 retro 单元格已有的状态、做得好、待改进；③ 同周要务完成状态和其余 Daily OS context。①存在时不要因为②为空就当作用户没有复盘。`,
-    'retro_review 只写复盘结论，不要写来源说明；长度必须控制在 350 个中文字符以内，固定两段：第一段是肯定的总结，第二段是待改进的总结。',
+    RETRO_REVIEW_STYLE,
     'row_index 必须来自 Runtime Evidence 的 first_column_okr_rows；不确定归属的要务不要放进 writeback_plan。',
     'writeback_plan 的每个对象只允许是一条 Feishu 有序列表项；同一 OKR 行有多条要务时，输出多个对象并使用相同 row_index。',
     '不要在 text 里用 "/" 串联多个要务，也不要在 text 末尾保留 "/"。',
@@ -1716,6 +1799,8 @@ function printHelp() {
   console.log('       life-review-os preview --run-id <id> --json');
   console.log('       life-review-os writeback --run-id <id> --json');
   console.log('       life-review-os write-review --run-id <id> --json');
+  console.log('       life-review-os review-cycle --input <file.json> --json [--provider claude|codex]');
+  console.log('         <file.json>: { cycle, mode, priorities, retro, context? }');
 }
 
 function redactObject(value) {
