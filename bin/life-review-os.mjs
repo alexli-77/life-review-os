@@ -10,7 +10,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RUNS_DIR = path.join(ROOT, '.runs');
 
 
-export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure, splitItems, carryoverCandidates, extractWritebackItems, claudeArgs, skillConstraints, buildRunReview, selectRetroReviewRow, findAdjacentRetro, buildCycleReviewPrompt, stripReviewWrapping, RETRO_REVIEW_STYLE, retroReviewStyle };
+export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure, splitItems, carryoverCandidates, textFromBlock, extractWritebackItems, claudeArgs, skillConstraints, buildRunReview, selectRetroReviewRow, findAdjacentRetro, buildCycleReviewPrompt, stripReviewWrapping, RETRO_REVIEW_STYLE, retroReviewStyle };
 
 async function main() {
   const [command = 'help', modeOrArg = 'weekly'] = positionalArgs();
@@ -567,14 +567,35 @@ function sleep(ms) {
 
 function textFromBlock(block) {
   const chunks = [];
+  let anyText = false;
+  let allStruck = true;
   const visit = (value) => {
     if (!value || typeof value !== 'object') return;
-    if (typeof value.content === 'string') chunks.push(value.content);
-    if (Array.isArray(value)) value.forEach(visit);
-    else Object.values(value).forEach(visit);
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (typeof value.content === 'string') {
+      chunks.push(value.content);
+      // A text_run carries its own strikethrough flag in text_element_style; the
+      // enclosing element does not. Check it right where the content lives.
+      if (value.content.trim()) {
+        anyText = true;
+        if (!value.text_element_style?.strikethrough) allStruck = false;
+      }
+    }
+    Object.values(value).forEach(visit);
   };
   visit(block);
-  return chunks.join('').trim();
+  const text = chunks.join('').trim();
+  // A fully struck-through line is how the user marks a table task done. Only
+  // `content` was ever read, so the strike was invisible: a finished item looked
+  // identical to an open one, slipped past the ✅-only carry-over filter, and got
+  // pulled into the next cycle. Surface it as ✅ — the done marker the rest of the
+  // pipeline (isCarryoverTask, evidence, summaries) already understands. Require
+  // every run struck so a partial strike is not mistaken for completion.
+  if (text && anyText && allStruck && !/[✅⭕❌🚧]/.test(text)) return `✅ ${text}`;
+  return text;
 }
 
 function validateTableMarker(table, marker) {
