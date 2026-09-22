@@ -45,10 +45,14 @@ test('file and network tools are denied: drafting is a pure text transformation'
   }
 });
 
-test('output stays plain text and MCP stays strict', () => {
+test('output streams JSON (for the idle-timeout heartbeat) and MCP stays strict', () => {
   const args = claudeArgs();
   assert.equal(args[0], '-p');
-  assert.equal(args[args.indexOf('--output-format') + 1], 'text');
+  // stream-json + partial messages give the run a heartbeat the idle timer
+  // watches; --verbose is required for stream-json under -p.
+  assert.equal(args[args.indexOf('--output-format') + 1], 'stream-json');
+  assert.ok(args.includes('--include-partial-messages'));
+  assert.ok(args.includes('--verbose'));
   assert.ok(args.includes('--strict-mcp-config'));
 });
 
