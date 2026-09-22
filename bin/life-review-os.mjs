@@ -913,7 +913,14 @@ function skillConstraints() {
  * variance killed the child mid-draft — and because a SIGTERMed process writes
  * nothing to either stream, the user got a bare "Claude failed:" with no cause.
  */
-const PROVIDER_TIMEOUT_MS = Number(process.env.LIFE_REVIEW_OS_PROVIDER_TIMEOUT_MS || 1200000);
+// Per-*attempt* timeout, deliberately short. A `claude` CLI under launchd is
+// bimodal — it answers in a minute or two, or it hangs forever (daily-os #199) —
+// so a short cap plus a retry (below) catches a hang fast and re-rolls instead of
+// burning 20 minutes before failing. Raise it if genuine runs are slow.
+const PROVIDER_TIMEOUT_MS = Number(process.env.LIFE_REVIEW_OS_PROVIDER_TIMEOUT_MS || 240000);
+// Attempts before giving up. 2 = one retry. Only a hang/empty-draft is retried;
+// a real error (bad binary, non-zero exit) fails immediately.
+const PROVIDER_MAX_ATTEMPTS = Math.max(1, Number(process.env.LIFE_REVIEW_OS_PROVIDER_MAX_ATTEMPTS || 2));
 
 /**
  * Describe why a provider process failed.
@@ -977,7 +984,19 @@ function claudeArgs() {
   ];
 }
 
-function runProvider(provider, prompt) {
+/** An error the retry loop should re-roll (a hang or an empty draft), vs a real one. */
+function providerError(message, retriable) {
+  const err = new Error(message);
+  err.retriable = retriable;
+  return err;
+}
+
+/** spawnSync's timeout signature: killed by SIGTERM at the deadline, or ETIMEDOUT. */
+function isProviderTimeout(res) {
+  return res.signal === 'SIGTERM' || res.error?.code === 'ETIMEDOUT';
+}
+
+function runProviderOnce(provider, prompt) {
   if (provider === 'claude') {
     const res = spawnSync(process.env.CLAUDE_BIN || 'claude', claudeArgs(), {
       input: prompt,
@@ -986,11 +1005,11 @@ function runProvider(provider, prompt) {
       timeout: PROVIDER_TIMEOUT_MS,
       maxBuffer: 64 * 1024 * 1024,
     });
-    if (res.status !== 0) throw new Error(describeProviderFailure('Claude', res));
+    if (res.status !== 0) throw providerError(describeProviderFailure('Claude', res), isProviderTimeout(res));
     // An exit status of 0 with empty output still breaks the caller, which
     // expects a draft to parse; say so here rather than downstream.
     const text = (res.stdout || '').trim();
-    if (!text) throw new Error('Claude exited successfully but returned an empty draft.');
+    if (!text) throw providerError('Claude exited successfully but returned an empty draft.', true);
     return text;
   }
   if (provider === 'codex') {
@@ -1004,11 +1023,35 @@ function runProvider(provider, prompt) {
     });
     const text = fs.existsSync(out) ? fs.readFileSync(out, 'utf8') : res.stdout || '';
     fs.rmSync(out, { force: true });
-    if (res.status !== 0) throw new Error(describeProviderFailure('Codex', res));
-    if (!text.trim()) throw new Error('Codex exited successfully but returned an empty draft.');
+    if (res.status !== 0) throw providerError(describeProviderFailure('Codex', res), isProviderTimeout(res));
+    if (!text.trim()) throw providerError('Codex exited successfully but returned an empty draft.', true);
     return text.trim();
   }
   throw new Error(`Unsupported provider: ${provider}`);
+}
+
+/**
+ * Fail fast, then retry. A short per-attempt timeout turns a hung CLI into a
+ * quick failure, and a fresh attempt has a real chance where waiting longer does
+ * not (daily-os #199). Only a hang or an empty draft is retried; a real error
+ * (bad binary, non-zero exit that is not a timeout) fails immediately.
+ */
+function runProvider(provider, prompt) {
+  let lastError;
+  for (let attempt = 1; attempt <= PROVIDER_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return runProviderOnce(provider, prompt);
+    } catch (error) {
+      lastError = error;
+      if (attempt < PROVIDER_MAX_ATTEMPTS && error && error.retriable) {
+        const first = String(error.message || '').split('\n')[0].slice(0, 100);
+        process.stderr.write(`[life-review-os] ${provider} 第 ${attempt}/${PROVIDER_MAX_ATTEMPTS} 次尝试失败（${first}），快速失败后重试\n`);
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError;
 }
 
 function deterministicDraft(reviewWeek, targetWeek, rows, planningPolicy = buildPlanningPolicy({}, rows), targetRows = []) {
