@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { splitItems, carryoverCandidates, extractWritebackItems } from '../bin/life-review-os.mjs';
+import { splitItems, carryoverCandidates, extractWritebackItems, textFromBlock } from '../bin/life-review-os.mjs';
 
 /**
  * readCellText used to join a cell's child blocks with ' / ' and splitItems
@@ -78,4 +78,47 @@ test('a parenthetical enumeration in a plan item is not split apart', () => {
   const draft = ['```json', JSON.stringify({ writeback_plan: plan }), '```'].join('\n');
   const [item] = extractWritebackItems(draft);
   assert.match(item.text, /过渡现金流/, 'the enumeration must stay with its item');
+});
+
+/**
+ * The user marks a task done by striking the whole line through in the Feishu
+ * table — not with a ✅ emoji. textFromBlock only ever read `content`, so the
+ * strike was invisible: a finished item read back as plain open text, slipped
+ * past the ✅-only carry-over filter, and reappeared in the next cycle. It now
+ * surfaces a fully-struck line as ✅ so the rest of the pipeline sees it done.
+ */
+const RESUME = '完成英文简历初稿，发给至少 1 位前辈或同行征求反馈';
+const struckRun = (content) => ({ text_run: { content, text_element_style: { strikethrough: true } } });
+const plainRun = (content) => ({ text_run: { content } });
+const block = (...elements) => ({ text: { elements } });
+
+test('a fully struck-through line is surfaced as done (✅)', () => {
+  assert.equal(textFromBlock(block(struckRun(RESUME))), `✅ ${RESUME}`);
+});
+
+test('a line struck across several runs is still one done line', () => {
+  assert.equal(textFromBlock(block(struckRun('完成英文简历初稿，'), struckRun('发给前辈征求反馈'))), '✅ 完成英文简历初稿，发给前辈征求反馈');
+});
+
+test('an unstruck line is left exactly as written', () => {
+  assert.equal(textFromBlock(block(plainRun(RESUME))), RESUME);
+});
+
+test('a partial strike is not mistaken for completion', () => {
+  // Only some runs struck — ambiguous, so no done marker is added.
+  assert.equal(textFromBlock(block(struckRun('完成英文简历初稿，'), plainRun('还差 peer review'))), '完成英文简历初稿，还差 peer review');
+});
+
+test('a struck line already carrying a marker is not double-marked', () => {
+  assert.equal(textFromBlock(block(struckRun(`✅ ${RESUME}`))), `✅ ${RESUME}`);
+});
+
+test('a struck task read from the table does not carry into the next cycle', () => {
+  // The end-to-end guard: what textFromBlock now yields for a struck line must
+  // be excluded by carryoverCandidates, the way a hand-typed ✅ already is.
+  const struckRows = [
+    { row: 0, okr: 'OKR', tasks: '' },
+    { row: 1, okr: 'O1 求职', tasks: textFromBlock(block(struckRun(RESUME))) },
+  ];
+  assert.equal(carryoverCandidates(struckRows, tableRows).length, 0, 'a struck (done) task must not carry over');
 });
