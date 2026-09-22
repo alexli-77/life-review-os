@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -103,7 +103,7 @@ async function runCycle(input) {
     targetRows,
     linearCoverage,
   });
-  const draft = input.provider === 'none' ? deterministicDraft(reviewWeek, targetWeek, reviewRows, planningPolicy, targetRows) : runProvider(input.provider, prompt);
+  const draft = input.provider === 'none' ? deterministicDraft(reviewWeek, targetWeek, reviewRows, planningPolicy, targetRows) : await runProvider(input.provider, prompt);
   const items = extractWritebackItems(draft);
   const writebackItems = applyPlanningBudget(
     assignRows(items, table.rows),
@@ -722,7 +722,7 @@ function buildCycleReviewPrompt(input) {
 async function reviewCycle(input) {
   const provider = input.provider || 'claude';
   const prompt = buildCycleReviewPrompt(input);
-  const raw = runProvider(provider, prompt);
+  const raw = await runProvider(provider, prompt);
   const text = stripReviewWrapping(raw);
   if (!text) throw new Error('Provider returned an empty review.');
   return { ok: true, cycle: String(input.cycle || ''), mode: String(input.mode || ''), provider, review: { text, chars: text.length } };
@@ -913,11 +913,17 @@ function skillConstraints() {
  * variance killed the child mid-draft — and because a SIGTERMed process writes
  * nothing to either stream, the user got a bare "Claude failed:" with no cause.
  */
-// Per-*attempt* timeout, deliberately short. A `claude` CLI under launchd is
-// bimodal — it answers in a minute or two, or it hangs forever (daily-os #199) —
-// so a short cap plus a retry (below) catches a hang fast and re-rolls instead of
-// burning 20 minutes before failing. Raise it if genuine runs are slow.
-const PROVIDER_TIMEOUT_MS = Number(process.env.LIFE_REVIEW_OS_PROVIDER_TIMEOUT_MS || 240000);
+// Absolute per-*attempt* ceiling (backstop), not the fast-fail mechanism. A real
+// biweekly runs ~9.5 minutes, almost all of it in the provider call, so this must
+// be generous enough never to kill a slow-but-working run. Fast hang detection is
+// the idle timeout below. Raise/lower via env; 0 disables the ceiling.
+const PROVIDER_TIMEOUT_MS = Number(process.env.LIFE_REVIEW_OS_PROVIDER_TIMEOUT_MS || 900000);
+// Fast-fail: kill the attempt when the CLI produces NO output for this long. A
+// `claude` CLI hung under launchd emits nothing (daily-os #199) and trips this in
+// ~2min; a slow-but-working run keeps streaming and resets the window, so a large
+// biweekly context is never misjudged. Needs a streaming output format (claude
+// uses stream-json below; codex exec streams its progress). 0 disables it.
+const PROVIDER_IDLE_TIMEOUT_MS = Number(process.env.LIFE_REVIEW_OS_PROVIDER_IDLE_TIMEOUT_MS || 120000);
 // Attempts before giving up. 2 = one retry. Only a hang/empty-draft is retried;
 // a real error (bad binary, non-zero exit) fails immediately.
 const PROVIDER_MAX_ATTEMPTS = Math.max(1, Number(process.env.LIFE_REVIEW_OS_PROVIDER_MAX_ATTEMPTS || 2));
@@ -933,9 +939,13 @@ const PROVIDER_MAX_ATTEMPTS = Math.max(1, Number(process.env.LIFE_REVIEW_OS_PROV
  */
 function describeProviderFailure(name, res) {
   const output = `${res.stderr || ''}${res.stdout || ''}`.trim();
-  if (res.error?.code === 'ETIMEDOUT' || res.signal === 'SIGTERM') {
+  if (res.timedOut) {
+    if (res.timeoutKind === 'idle') {
+      const seconds = Math.round(PROVIDER_IDLE_TIMEOUT_MS / 1000);
+      return `${name} produced no output for ${seconds}s and was treated as hung (SIGTERM). In a launchd background service this CLI may never return (daily-os #199); check another provider or raise LIFE_REVIEW_OS_PROVIDER_IDLE_TIMEOUT_MS.${output ? ` Partial output: ${output.slice(0, 500)}` : ''}`;
+    }
     const seconds = Math.round(PROVIDER_TIMEOUT_MS / 1000);
-    return `${name} timed out after ${seconds}s (killed by ${res.signal || 'timeout'}). Raise LIFE_REVIEW_OS_PROVIDER_TIMEOUT_MS or shorten the prompt.${output ? ` Partial output: ${output.slice(0, 500)}` : ''}`;
+    return `${name} timed out after ${seconds}s (killed by SIGTERM). Raise LIFE_REVIEW_OS_PROVIDER_TIMEOUT_MS or shorten the prompt.${output ? ` Partial output: ${output.slice(0, 500)}` : ''}`;
   }
   if (res.error) {
     const binary = name === 'Claude' ? process.env.CLAUDE_BIN || 'claude' : process.env.CODEX_BIN || 'codex';
@@ -945,6 +955,65 @@ function describeProviderFailure(name, res) {
   if (res.signal) return `${name} was killed by ${res.signal}.${output ? ` Output: ${output.slice(0, 500)}` : ''}`;
   if (!output) return `${name} exited with status ${res.status} and produced no output.`;
   return `${name} exited with status ${res.status}: ${output.slice(0, 2000)}`;
+}
+
+/**
+ * Run a CLI, killing it when it goes silent (idle timeout) or blows the absolute
+ * ceiling — the async streaming equivalent of spawnSync, so a heartbeat exists.
+ * Resolves with the collected streams and how it ended; never rejects.
+ */
+function runCliStreaming(bin, args, { input, cwd }) {
+  return new Promise((resolve) => {
+    const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'], cwd });
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let timeoutKind;
+    const total = PROVIDER_TIMEOUT_MS > 0
+      ? setTimeout(() => { timedOut = true; timeoutKind = 'total'; child.kill('SIGTERM'); }, PROVIDER_TIMEOUT_MS)
+      : undefined;
+    let idle;
+    const armIdle = PROVIDER_IDLE_TIMEOUT_MS > 0
+      ? () => {
+          if (idle) clearTimeout(idle);
+          idle = setTimeout(() => { timedOut = true; timeoutKind = 'idle'; child.kill('SIGTERM'); }, PROVIDER_IDLE_TIMEOUT_MS);
+        }
+      : undefined;
+    armIdle?.();
+    const clear = () => { if (total) clearTimeout(total); if (idle) clearTimeout(idle); };
+    child.stdout.on('data', (c) => { stdout += c.toString('utf8'); armIdle?.(); });
+    child.stderr.on('data', (c) => { stderr += c.toString('utf8'); armIdle?.(); });
+    child.on('error', (error) => { clear(); resolve({ status: null, stdout, stderr, timedOut, timeoutKind, error }); });
+    child.on('close', (status) => { clear(); resolve({ status, stdout, stderr, timedOut, timeoutKind }); });
+    child.stdin.on('error', () => {});
+    child.stdin.end(input ?? '');
+  });
+}
+
+/**
+ * Reconstruct the final text from a claude `stream-json` transcript: the terminal
+ * `type:"result"` event carries it in `.result`; fall back to the text blocks of
+ * `assistant` messages, then to raw stdout. Non-JSON lines are ignored.
+ */
+function extractStreamJsonText(stdout) {
+  let resultText = '';
+  const chunks = [];
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let event;
+    try { event = JSON.parse(trimmed); } catch { continue; }
+    if (!event || typeof event !== 'object') continue;
+    if (event.type === 'result' && typeof event.result === 'string') resultText = event.result;
+    else if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+      for (const block of event.message.content) {
+        if (block?.type === 'text' && typeof block.text === 'string') chunks.push(block.text);
+      }
+    }
+  }
+  if (resultText.trim()) return resultText;
+  if (chunks.length) return chunks.join('');
+  return stdout;
 }
 
 /**
@@ -972,8 +1041,13 @@ const DRAFTING_DISALLOWED_TOOLS = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Gre
 function claudeArgs() {
   return [
     '-p',
+    // stream-json + partial messages gives the run a heartbeat the idle timer can
+    // watch; --verbose is required for stream-json under -p. extractStreamJsonText
+    // reassembles the answer from the terminal result event.
     '--output-format',
-    'text',
+    'stream-json',
+    '--include-partial-messages',
+    '--verbose',
     '--strict-mcp-config',
     '--effort',
     CLAUDE_EFFORT,
@@ -991,39 +1065,26 @@ function providerError(message, retriable) {
   return err;
 }
 
-/** spawnSync's timeout signature: killed by SIGTERM at the deadline, or ETIMEDOUT. */
-function isProviderTimeout(res) {
-  return res.signal === 'SIGTERM' || res.error?.code === 'ETIMEDOUT';
-}
-
-function runProviderOnce(provider, prompt) {
+async function runProviderOnce(provider, prompt) {
   if (provider === 'claude') {
-    const res = spawnSync(process.env.CLAUDE_BIN || 'claude', claudeArgs(), {
-      input: prompt,
-      encoding: 'utf8',
-      cwd: ROOT,
-      timeout: PROVIDER_TIMEOUT_MS,
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    if (res.status !== 0) throw providerError(describeProviderFailure('Claude', res), isProviderTimeout(res));
+    const res = await runCliStreaming(process.env.CLAUDE_BIN || 'claude', claudeArgs(), { input: prompt, cwd: ROOT });
+    if (res.timedOut || res.error || res.status !== 0) {
+      throw providerError(describeProviderFailure('Claude', res), Boolean(res.timedOut));
+    }
     // An exit status of 0 with empty output still breaks the caller, which
     // expects a draft to parse; say so here rather than downstream.
-    const text = (res.stdout || '').trim();
+    const text = extractStreamJsonText(res.stdout || '').trim();
     if (!text) throw providerError('Claude exited successfully but returned an empty draft.', true);
     return text;
   }
   if (provider === 'codex') {
     const out = path.join(os.tmpdir(), `life-review-os-${Date.now()}.md`);
-    const res = spawnSync(process.env.CODEX_BIN || 'codex', ['exec', '--skip-git-repo-check', '--ignore-rules', '--sandbox', 'read-only', '--output-last-message', out, '--cd', ROOT, '-'], {
-      input: prompt,
-      encoding: 'utf8',
-      cwd: ROOT,
-      timeout: PROVIDER_TIMEOUT_MS,
-      maxBuffer: 64 * 1024 * 1024,
-    });
+    const res = await runCliStreaming(process.env.CODEX_BIN || 'codex', ['exec', '--skip-git-repo-check', '--ignore-rules', '--sandbox', 'read-only', '--output-last-message', out, '--cd', ROOT, '-'], { input: prompt, cwd: ROOT });
     const text = fs.existsSync(out) ? fs.readFileSync(out, 'utf8') : res.stdout || '';
     fs.rmSync(out, { force: true });
-    if (res.status !== 0) throw providerError(describeProviderFailure('Codex', res), isProviderTimeout(res));
+    if (res.timedOut || res.error || res.status !== 0) {
+      throw providerError(describeProviderFailure('Codex', res), Boolean(res.timedOut));
+    }
     if (!text.trim()) throw providerError('Codex exited successfully but returned an empty draft.', true);
     return text.trim();
   }
@@ -1031,16 +1092,17 @@ function runProviderOnce(provider, prompt) {
 }
 
 /**
- * Fail fast, then retry. A short per-attempt timeout turns a hung CLI into a
- * quick failure, and a fresh attempt has a real chance where waiting longer does
- * not (daily-os #199). Only a hang or an empty draft is retried; a real error
- * (bad binary, non-zero exit that is not a timeout) fails immediately.
+ * Fail fast, then retry. The idle timeout turns a hung CLI into a quick failure
+ * without misjudging a slow-but-streaming run, and a fresh attempt has a real
+ * chance where waiting longer does not (daily-os #199). Only a timeout or an
+ * empty draft is retried; a real error (bad binary, non-zero exit that is not a
+ * timeout) fails immediately.
  */
-function runProvider(provider, prompt) {
+async function runProvider(provider, prompt) {
   let lastError;
   for (let attempt = 1; attempt <= PROVIDER_MAX_ATTEMPTS; attempt += 1) {
     try {
-      return runProviderOnce(provider, prompt);
+      return await runProviderOnce(provider, prompt);
     } catch (error) {
       lastError = error;
       if (attempt < PROVIDER_MAX_ATTEMPTS && error && error.retriable) {

@@ -10,22 +10,26 @@ import { describeProviderFailure } from '../bin/life-review-os.mjs';
  * "life-review-os run failed: Claude failed:" with nothing after the colon.
  */
 
-const NO_OUTPUT = { status: null, signal: 'SIGTERM', stdout: '', stderr: '' };
+const TOTAL_TIMEOUT = { status: null, signal: 'SIGTERM', stdout: '', stderr: '', timedOut: true, timeoutKind: 'total' };
+const IDLE_TIMEOUT = { status: null, signal: 'SIGTERM', stdout: '', stderr: '', timedOut: true, timeoutKind: 'idle' };
 
 test('a timeout says it timed out, for how long, and how to raise it', () => {
-  const message = describeProviderFailure('Claude', { ...NO_OUTPUT, error: Object.assign(new Error('spawnSync ETIMEDOUT'), { code: 'ETIMEDOUT' }) });
+  const message = describeProviderFailure('Claude', TOTAL_TIMEOUT);
   assert.match(message, /timed out after \d+s/);
   assert.match(message, /LIFE_REVIEW_OS_PROVIDER_TIMEOUT_MS/);
   assert.ok(message.length > 'Claude failed: '.length, 'must not be an empty tail');
 });
 
-test('a SIGTERM with no error object is still reported as a timeout', () => {
-  // spawnSync surfaces the kill this way on some platforms: signal set, no error.
-  assert.match(describeProviderFailure('Claude', NO_OUTPUT), /timed out after \d+s/);
+test('an idle timeout is reported as a hang, naming the idle knob', () => {
+  // The fast-fail case: no output for the idle window is treated as a hang.
+  const message = describeProviderFailure('Claude', IDLE_TIMEOUT);
+  assert.match(message, /no output for \d+s/);
+  assert.match(message, /hung/);
+  assert.match(message, /LIFE_REVIEW_OS_PROVIDER_IDLE_TIMEOUT_MS/);
 });
 
 test('partial output before the kill is preserved', () => {
-  const message = describeProviderFailure('Claude', { ...NO_OUTPUT, stdout: '## 上周执行对比 …草稿写到一半' });
+  const message = describeProviderFailure('Claude', { ...TOTAL_TIMEOUT, stdout: '## 上周执行对比 …草稿写到一半' });
   assert.match(message, /Partial output: ## 上周执行对比/);
 });
 
