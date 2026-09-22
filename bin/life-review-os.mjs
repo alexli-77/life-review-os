@@ -174,7 +174,7 @@ async function writebackRun(runId) {
   let insertedColumns = false;
   if (taskColumn < 0) {
     insertedColumns = true;
-    await insertWeekColumns(weekly, run.writeback.layout);
+    await insertWeekColumns(weekly);
     const updated = await readWeeklyTable(weekly);
     await writeHeadersForInsertedWeek(weekly, updated, run.writeback);
     taskColumn = findHeader((await readWeeklyTable(weekly)).headers, targetHeader);
@@ -1519,14 +1519,30 @@ function tokenSet(value) {
   return out;
 }
 
-async function insertWeekColumns(weekly, layout) {
-  if (layout === 'retro_before_task') {
-    await larkApi('PATCH', `/open-apis/docx/v1/documents/${weekly.token}/blocks/${weekly.tableBlockId}`, { insert_table_column: { column_index: 1 } });
-    await larkApi('PATCH', `/open-apis/docx/v1/documents/${weekly.token}/blocks/${weekly.tableBlockId}`, { insert_table_column: { column_index: 2 } });
-    return;
+async function insertWeekColumns(weekly) {
+  const path = `/open-apis/docx/v1/documents/${weekly.token}/blocks/${weekly.tableBlockId}`;
+  // Both new columns go in at index 1 — just right of the OKR column — not 1 then
+  // 2. Index 2 is the newest week's retro cell, which is vertically merged
+  // (row_span = rows − 1), and Feishu rejects inserting a column into a vertical
+  // merge with `1770001 invalid param` (life-review-os #33). The left edge is
+  // never inside a merge, so two inserts there are safe and leave the same two
+  // leading columns; which becomes retro vs 要务 is decided in
+  // writeHeadersForInsertedWeek. That is why the old retro_before_task / else
+  // split, whose two branches were byte-identical, was a no-op — it is gone.
+  await larkApi('PATCH', path, { insert_table_column: { column_index: 1 } });
+  try {
+    await larkApi('PATCH', path, { insert_table_column: { column_index: 1 } });
+  } catch (error) {
+    // Never leave half a week behind. Before this, the first insert always
+    // succeeded and the second landed on the merge and threw, so every failed
+    // run added one more headerless empty column. Roll the first one back so a
+    // retry starts clean; surface the original error regardless of whether the
+    // rollback itself succeeds.
+    try {
+      await larkApi('PATCH', path, { delete_table_column: { column_index: 1 } });
+    } catch { /* best effort */ }
+    throw error;
   }
-  await larkApi('PATCH', `/open-apis/docx/v1/documents/${weekly.token}/blocks/${weekly.tableBlockId}`, { insert_table_column: { column_index: 1 } });
-  await larkApi('PATCH', `/open-apis/docx/v1/documents/${weekly.token}/blocks/${weekly.tableBlockId}`, { insert_table_column: { column_index: 2 } });
 }
 
 async function writeHeadersForInsertedWeek(weekly, table, writeback) {
