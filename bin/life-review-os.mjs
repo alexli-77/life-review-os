@@ -7,7 +7,12 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const RUNS_DIR = path.join(ROOT, '.runs');
+// Run records default beside the code, but that directory is read-only when the
+// CLI is bundled inside the Mac app (Resources/…). LIFE_REVIEW_OS_RUNS_DIR lets
+// the caller point them at a writable, persistent location — it must be the same
+// across the `run` and later `writeback`/`preview`/`write-review` invocations,
+// since the later commands read back the record the run wrote.
+const RUNS_DIR = process.env.LIFE_REVIEW_OS_RUNS_DIR || path.join(ROOT, '.runs');
 
 
 export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure, splitItems, carryoverCandidates, extractWritebackItems, claudeArgs, skillConstraints, buildRunReview, selectRetroReviewRow, findAdjacentRetro, buildCycleReviewPrompt, stripReviewWrapping, RETRO_REVIEW_STYLE, retroReviewStyle };
