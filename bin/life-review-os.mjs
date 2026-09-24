@@ -10,7 +10,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RUNS_DIR = path.join(ROOT, '.runs');
 
 
-export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure, splitItems, carryoverCandidates, textFromBlock, extractWritebackItems, claudeArgs, skillConstraints, buildRunReview, selectRetroReviewRow, findAdjacentRetro, buildCycleReviewPrompt, stripReviewWrapping, RETRO_REVIEW_STYLE, retroReviewStyle };
+export { cycleDays, cycleRange, previousCycle, resolveCycle, biweeklyBudgetMultiplier, buildPlanningPolicy, parseConfigYaml, buildWeeklyPrompt, applyPlanningBudget, weeklyTarget, taskTextElements, describeProviderFailure, splitItems, carryoverCandidates, textFromBlock, extractWritebackItems, claudeArgs, skillConstraints, buildRunReview, selectRetroReviewRow, findAdjacentRetro, buildCycleReviewPrompt, stripReviewWrapping, RETRO_REVIEW_STYLE, retroReviewStyle, readCycleContext, gatherFromCycleContext, weeklyMeta, normalizeCycleTasks };
 
 async function main() {
   const [command = 'help', modeOrArg = 'weekly'] = positionalArgs();
@@ -58,13 +58,108 @@ async function main() {
 async function runCycle(input) {
   const config = loadConfig();
   const cycle = resolveCycle(config, input.mode);
+  // The cycle's OKR rows and the previous/target 要务/retro now live in the
+  // user's local vault (10_OKR + 20_CYCLES) and Daily OS builds them into the
+  // input pack as a `## Cycle Context` block. When it is there we read that and
+  // never touch the Feishu weekly table — a run needs no Feishu token. When it
+  // is absent (no local cycle, or an older Daily OS) we fall back to the table.
+  const cycleContext = readCycleContext(input.dailyOsInputPath);
+  const evidence = cycleContext ? gatherFromCycleContext(config, cycleContext, cycle) : await gatherFromFeishu(config, cycle);
+  const { weekly, targetWeek, reviewWeek, tableRows, reviewRows, targetRows, layout } = evidence;
+
+  const planningPolicy = buildPlanningPolicy(config, tableRows, cycle);
+  const linearCoverage = buildLinearCoverage(readLinearSnapshot(input.dailyOsInputPath), reviewRows, targetRows);
+
+  const prompt = buildWeeklyPrompt({
+    config,
+    weekly,
+    mode: cycle,
+    userText: input.userText,
+    dailyOsInputPath: input.dailyOsInputPath,
+    planningPolicy,
+    targetWeek,
+    reviewWeek,
+    reviewRows,
+    targetRows,
+    linearCoverage,
+    evidenceSource: cycleContext ? 'local' : 'feishu',
+  });
+  const draft = input.provider === 'none' ? deterministicDraft(reviewWeek, targetWeek, reviewRows, planningPolicy, targetRows) : await runProvider(input.provider, prompt);
+  const items = extractWritebackItems(draft);
+  const writebackItems = applyPlanningBudget(
+    assignRows(items, tableRows),
+    reviewRows,
+    tableRows,
+    planningPolicy,
+    new Set(linearCoverage.closed_issue_keys),
+  );
+  const reviewText = extractReviewText(draft) || buildDeterministicRetroReview(targetRows, reviewRows);
+  const reviewTargetRow = selectRetroReviewRow(targetRows);
+  // The header the plan writes into. From the table when we read it; otherwise
+  // reconstructed from the cycle label + configured suffix, same as the Feishu
+  // path's fallback — Feishu writeback re-reads the table and re-locates it.
+  const targetTaskHeader = evidence.evTargetTaskHeader || `${targetWeek.label} ${weekly.taskHeaderSuffix}`;
+  const run = {
+    ok: true,
+    run_id: crypto.randomUUID(),
+    created_at: new Date().toISOString(),
+    mode: cycle,
+    provider: input.provider,
+    draft,
+    evidence: {
+      review_week: reviewWeek.label,
+      target_week: targetWeek.label,
+      source: cycleContext ? 'local_cycle_context' : 'feishu_weekly_table',
+      review_task_header: evidence.evReviewTaskHeader,
+      target_task_header: evidence.evTargetTaskHeader,
+      target_retro_header: evidence.evTargetRetroHeader,
+      review_task_rows: reviewRows.map((row) => ({ row: row.row, okr: row.okr.slice(0, 160), tasks_preview: row.tasks.slice(0, 260), retro_preview: row.retro.slice(0, 180) })),
+      target_retro_rows: targetRows.map((row) => ({ row: row.row, okr: row.okr.slice(0, 160), tasks_preview: row.tasks.slice(0, 220), retro_preview: row.retro.slice(0, 260) })),
+      planning_policy: planningPolicy,
+      linear_coverage: {
+        uncovered_active: linearCoverage.uncovered_active,
+        closed_in_table: linearCoverage.closed_in_table,
+        retired_from_plan: writebackItems.retired || [],
+      },
+    },
+    writeback: {
+      doc_year: weekly.year,
+      doc_label: `Weekly ${weekly.year}`,
+      target_week: targetWeek.label,
+      task_header: targetTaskHeader,
+      action: evidence.writebackAction,
+      layout,
+      items: writebackItems,
+      ready: writebackItems.length > 0 && writebackItems.every((item) => typeof item.target_row === 'number'),
+      review: buildRunReview({
+        // The review summarises the cycle that just ENDED, so it belongs in that
+        // cycle's retro cell — beside the review week's task column, not the
+        // target week's. See buildRunReview.
+        sourceTaskHeader: evidence.evReviewTaskHeader || `${reviewWeek.label} ${weekly.taskHeaderSuffix}`,
+        targetTaskHeader,
+        targetRetroHeader: evidence.evTargetRetroHeader,
+        targetRow: reviewTargetRow,
+        text: reviewText,
+        layout,
+      }),
+    },
+  };
+  saveRun(run);
+  return run;
+}
+
+/**
+ * Read the cycle's evidence from the Feishu weekly table. This is the original
+ * path, unchanged; it now returns a normalized shape so runCycle can treat it
+ * and the local-cycle-context path identically.
+ */
+async function gatherFromFeishu(config, cycle) {
   const now = new Date();
   const targetWeek = cycleRange(targetWeekDate(config, now), cycle);
   const reviewWeek = previousCycle(targetWeek.start, cycle);
   const weekly = weeklyTarget(config, targetWeek.start);
   const table = await readWeeklyTable(weekly);
   validateTableMarker(table, weekly.marker);
-  const planningPolicy = buildPlanningPolicy(config, table.rows, cycle);
 
   const reviewTaskColumn = findHeader(table.headers, `${reviewWeek.label} ${weekly.taskHeaderSuffix}`);
   const reviewRetroColumn = findAdjacentRetro(table.headers, reviewTaskColumn, weekly.retroHeaderSuffix);
@@ -87,79 +182,113 @@ async function runCycle(input) {
     tasks: targetTaskColumn >= 0 ? targetTaskValues[row.index] || '' : '',
     retro: targetRetroColumn >= 0 ? targetRetroValues[row.index] || '' : '',
   }));
-  const layout = detectLayout(table.headers, weekly.retroHeaderSuffix, weekly.taskHeaderSuffix);
-  const linearCoverage = buildLinearCoverage(readLinearSnapshot(input.dailyOsInputPath), reviewRows, targetRows);
 
-  const prompt = buildWeeklyPrompt({
-    config,
+  return {
     weekly,
-    mode: cycle,
-    userText: input.userText,
-    dailyOsInputPath: input.dailyOsInputPath,
-    planningPolicy,
     targetWeek,
     reviewWeek,
+    tableRows: table.rows,
     reviewRows,
     targetRows,
-    linearCoverage,
-  });
-  const draft = input.provider === 'none' ? deterministicDraft(reviewWeek, targetWeek, reviewRows, planningPolicy, targetRows) : await runProvider(input.provider, prompt);
-  const items = extractWritebackItems(draft);
-  const writebackItems = applyPlanningBudget(
-    assignRows(items, table.rows),
-    reviewRows,
-    table.rows,
-    planningPolicy,
-    new Set(linearCoverage.closed_issue_keys),
-  );
-  const reviewText = extractReviewText(draft) || buildDeterministicRetroReview(targetRows, reviewRows);
-  const reviewTargetRow = selectRetroReviewRow(targetRows);
-  const run = {
-    ok: true,
-    run_id: crypto.randomUUID(),
-    created_at: new Date().toISOString(),
-    mode: cycle,
-    provider: input.provider,
-    draft,
-    evidence: {
-      review_week: reviewWeek.label,
-      target_week: targetWeek.label,
-      review_task_header: reviewTaskColumn >= 0 ? table.headers[reviewTaskColumn] : null,
-      target_task_header: targetTaskColumn >= 0 ? table.headers[targetTaskColumn] : null,
-      target_retro_header: targetRetroColumn >= 0 ? table.headers[targetRetroColumn] : null,
-      review_task_rows: reviewRows.map((row) => ({ row: row.row, okr: row.okr.slice(0, 160), tasks_preview: row.tasks.slice(0, 260), retro_preview: row.retro.slice(0, 180) })),
-      target_retro_rows: targetRows.map((row) => ({ row: row.row, okr: row.okr.slice(0, 160), tasks_preview: row.tasks.slice(0, 220), retro_preview: row.retro.slice(0, 260) })),
-      planning_policy: planningPolicy,
-      linear_coverage: {
-        uncovered_active: linearCoverage.uncovered_active,
-        closed_in_table: linearCoverage.closed_in_table,
-        retired_from_plan: writebackItems.retired || [],
-      },
-    },
-    writeback: {
-      doc_year: weekly.year,
-      doc_label: `Weekly ${weekly.year}`,
-      target_week: targetWeek.label,
-      task_header: targetTaskHeader,
-      action: targetTaskColumn >= 0 ? 'append_to_existing_empty_column' : 'insert_columns',
-      layout,
-      items: writebackItems,
-      ready: writebackItems.length > 0 && writebackItems.every((item) => typeof item.target_row === 'number'),
-      review: buildRunReview({
-        // The review summarises the cycle that just ENDED, so it belongs in that
-        // cycle's retro cell — beside the review week's task column, not the
-        // target week's. See buildRunReview.
-        sourceTaskHeader: reviewTaskColumn >= 0 ? table.headers[reviewTaskColumn] : `${reviewWeek.label} ${weekly.taskHeaderSuffix}`,
-        targetTaskHeader: targetTaskColumn >= 0 ? table.headers[targetTaskColumn] : targetTaskHeader,
-        targetRetroHeader: targetRetroColumn >= 0 ? table.headers[targetRetroColumn] : null,
-        targetRow: reviewTargetRow,
-        text: reviewText,
-        layout,
-      }),
-    },
+    evReviewTaskHeader: reviewTaskColumn >= 0 ? table.headers[reviewTaskColumn] : null,
+    evTargetTaskHeader: targetTaskColumn >= 0 ? table.headers[targetTaskColumn] : null,
+    evTargetRetroHeader: targetRetroColumn >= 0 ? table.headers[targetRetroColumn] : null,
+    writebackAction: targetTaskColumn >= 0 ? 'append_to_existing_empty_column' : 'insert_columns',
+    layout: detectLayout(table.headers, weekly.retroHeaderSuffix, weekly.taskHeaderSuffix),
   };
-  saveRun(run);
-  return run;
+}
+
+/**
+ * Build the same normalized evidence from Daily OS's local `cycle_context`
+ * (schema 1) instead of the Feishu table. The weeks and OKR rows come straight
+ * from the context; the previous/target 要务 are the per-row task blocks it
+ * carries. The reviewed cycle's retro reaches the planner through the pack's
+ * own `## Local Cycle Retro` block, so per-row `retro` is left empty here.
+ *
+ * `tableRows` mirrors the table's shape (index 0 is the header, 1..N are the
+ * OKR rows) so assignRows / applyPlanningBudget / carryoverCandidates work
+ * unchanged. No Feishu column headers exist, so the header fields are null and
+ * writeback (if ever run against Feishu) re-locates the column from the table.
+ */
+function gatherFromCycleContext(config, context, cycle) {
+  const weekly = weeklyMeta(config, context.targetWeek.start || '');
+  const tableRows = [{ index: 0, firstColumn: '' }, ...context.okrRows.map((entry) => ({ index: entry.row_index, firstColumn: entry.okr }))];
+  const byReview = new Map((context.reviewRows || []).map((row) => [row.row, row]));
+  const byTarget = new Map((context.targetRows || []).map((row) => [row.row, row]));
+  const rowsFrom = (source) => tableRows.map((tr) => ({
+    row: tr.index,
+    okr: tr.firstColumn,
+    tasks: tr.index === 0 ? '' : normalizeCycleTasks(source.get(tr.index)?.tasks || ''),
+    retro: '',
+  }));
+
+  return {
+    weekly,
+    targetWeek: { start: context.targetWeek.start, end: context.targetWeek.end, label: context.targetWeek.label },
+    reviewWeek: { start: context.reviewWeek.start, end: context.reviewWeek.end, label: context.reviewWeek.label },
+    tableRows,
+    reviewRows: rowsFrom(byReview),
+    targetRows: rowsFrom(byTarget),
+    evReviewTaskHeader: null,
+    evTargetTaskHeader: null,
+    evTargetRetroHeader: null,
+    writebackAction: 'insert_columns',
+    layout: 'retro_before_task',
+  };
+}
+
+/**
+ * The `cycle_context` JSON Daily OS emits as a `## Cycle Context` block, or null
+ * when it is absent (older Daily OS, or no local cycle → the block reads
+ * "(no local cycle context)"). Null routes runCycle back to the Feishu table.
+ * Parsed from the whole pack rather than the first 20k: Daily OS keeps the
+ * block high so the model sees it too, but the parser has no reason to guess.
+ */
+function readCycleContext(dailyOsInputPath) {
+  if (!dailyOsInputPath || !fs.existsSync(dailyOsInputPath)) return null;
+  const text = fs.readFileSync(dailyOsInputPath, 'utf8');
+  const marker = text.indexOf('## Cycle Context');
+  if (marker < 0) return null;
+  const fence = /```json\s*([\s\S]*?)```/.exec(text.slice(marker));
+  if (!fence) return null;
+  try {
+    const parsed = JSON.parse(fence[1].trim());
+    if (!parsed || parsed.schema !== 1 || !Array.isArray(parsed.okrRows) || parsed.okrRows.length === 0) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Config-derived header suffixes / year / marker, without requiring a Feishu
+ * token — the local path needs the labels weeklyTarget builds but not the doc
+ * credentials it insists on.
+ */
+function weeklyMeta(config, date) {
+  const year = Number(String(date).slice(0, 4)) || new Date().getFullYear();
+  const docs = (config.documents && config.documents.weekly) || [];
+  const selected = docs.find((doc) => doc.year === year) || docs[0] || {};
+  return {
+    year: selected.year || year,
+    taskHeaderSuffix: selected.task_header_suffix || '要务',
+    retroHeaderSuffix: selected.retro_header_suffix || 'retro',
+    marker: selected.table_marker || (config.user && config.user.symbol) || '🐶',
+    linearWorkspace: (config.linear && config.linear.workspace) || '',
+  };
+}
+
+/**
+ * A 要务 row in cycle_context is markdown bullets (`- 完成简历`); the table path
+ * delivered plain one-per-line text. Strip the bullet marker so splitItems and
+ * the carryover heuristics see the same shape they always have.
+ */
+function normalizeCycleTasks(text) {
+  return String(text)
+    .split('\n')
+    .map((line) => line.replace(/^\s*[-*]\s+/, '').trim())
+    .filter(Boolean)
+    .join('\n');
 }
 
 async function writebackRun(runId) {
@@ -767,11 +896,14 @@ function buildWeeklyPrompt(input) {
   const engine03 = readText('engine/03-plan.md');
   const framework = readText(`frameworks/${input.config.framework || 'stephen-covey'}.md`);
   const dailyOs = input.dailyOsInputPath && fs.existsSync(input.dailyOsInputPath) ? fs.readFileSync(input.dailyOsInputPath, 'utf8').slice(0, 20000) : '';
+  // The structured rows are authoritative either way; only their provenance
+  // differs — the local vault (20_CYCLES / 10_OKR) or the Feishu weekly table.
+  const factsName = input.evidenceSource === 'local' ? '下面来自本地周期数据（20_CYCLES / 10_OKR）的' : '下面 Feishu 表格的';
   return [
     '# Life Review OS weekly run',
     '',
     '请严格按 Life Review OS 规则输出中文 weekly review 草稿。不要写回飞书；写回由 CLI 的 writeback 命令执行。',
-    '必须使用下面的 Feishu 表格结构化数据作为权威事实，不要说表格为空，除非对应 rows 的 tasks 真的为空。',
+    `必须使用${factsName}结构化数据作为权威事实，不要说数据为空，除非对应 rows 的 tasks 真的为空。`,
     ...(input.mode === 'biweekly'
       ? [
           `本次为双周（biweekly）模式：target_week（${input.targetWeek.label}）是一个两周区间，review_week（${input.reviewWeek.label}）是上两周。`,
@@ -808,7 +940,7 @@ function buildWeeklyPrompt(input) {
     ),
     '',
     '# Daily OS context',
-    '以下是 Daily OS 补充上下文，只能用于补充候选、校准任务量和识别实际投入；不能覆盖 Feishu 🐶 表格事实，也不能在最终用户可见输出中展示来源、证据名、row_index 或内部判断过程。',
+    `以下是 Daily OS 补充上下文，只能用于补充候选、校准任务量和识别实际投入；不能覆盖上面${input.evidenceSource === 'local' ? '本地周期数据' : 'Feishu 🐶 表格'}的结构化事实，也不能在最终用户可见输出中展示来源、证据名、row_index 或内部判断过程。`,
     // The one exception, and it has to be stated here or the line above cancels
     // it: the user now writes their retro in Daily OS's own Cycles page, so for
     // the retro specifically the local file is the newer copy and the Feishu
